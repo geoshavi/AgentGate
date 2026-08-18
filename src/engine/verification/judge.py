@@ -142,7 +142,17 @@ def run_judge_gates(
             ],
             model=model,
             system=lens_system,
-            max_tokens=800,
+            # 1600, not 800: Sonnet 5 spends a large and variable share of
+            # its output budget before the JSON begins. In the Phase 9B
+            # canary 11 of 120 lens calls hit the old 800 cap, 9 of them
+            # returning zero text, and gate() fails a truncated lens closed
+            # to UNVERIFIED -- so the cap was deciding verdicts. The same
+            # case/lens pairs need only 26-587 output tokens of JSON under
+            # Haiku, and the largest complete JSON measured on this dataset
+            # is ~800, so 1600 covers the observed pre-JSON consumption
+            # (~730-800) plus a worst-case answer. A call that still
+            # overruns truncates and fails closed, as before.
+            max_tokens=1600,
             agent_name=f"judge:{lens_name}",
             run_id=run_id,
             task_id=task_id,

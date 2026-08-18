@@ -54,9 +54,11 @@ BENCHMARK_MAX_TOKENS = 400_000
 BENCHMARK_PLANNED_BUDGET = Decimal("3.00")
 
 # Assumptions behind the --dry-run cost estimate, matching verification/judge.py's
-# hardcoded max_tokens=800 per lens call and the Phase 2 report's worst-case
-# input-token assumption for small benchmark snippets.
-JUDGE_MAX_OUTPUT_TOKENS = 800
+# hardcoded max_tokens=1600 per lens call and the Phase 2 report's worst-case
+# input-token assumption for small benchmark snippets. This value only feeds
+# estimate_benchmark_cost(); it must be kept equal to the cap judge.py actually
+# enforces, or --dry-run understates the ceiling it exists to check.
+JUDGE_MAX_OUTPUT_TOKENS = 1600
 ASSUMED_INPUT_TOKENS_PER_CALL = 2000
 LENSES_PER_CASE = 3
 
