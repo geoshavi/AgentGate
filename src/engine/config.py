@@ -22,7 +22,7 @@ DEFAULT_MODELS = {
         "research": "claude-sonnet-5",
         "testing": "claude-sonnet-5",
         "refactoring": "claude-sonnet-5",
-        "judge": "claude-haiku-4-5-20251001",
+        "judge": "claude-sonnet-5",
         "planner": "claude-sonnet-5",
     },
 }
