@@ -2,7 +2,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 
-from engine.llm_types import Message
+from engine.llm_types import Effort, Message
 from engine.runtime.budget import BudgetController
 from engine.runtime.gateway import LLMGateway
 from engine.verification.schema import enforce_critic_schema
@@ -31,6 +31,23 @@ LENSES = {
         "reviewed separately."
     ),
 }
+
+# Sonnet 5 runs adaptive thinking whenever the request omits a thinking
+# config, at a default effort of "high". Those thinking tokens are output
+# tokens and count against max_tokens, but never appear in the extracted text
+# -- which is how three Phase 9C lens calls spent the entire 1600-token budget
+# and returned 0 and 831 bytes of visible answer. Two of the three produced no
+# text at all, so the cap could not be sized from the data: there was no upper
+# bound on what they needed, only a lower one.
+#
+# "medium", not "low": the aim is to reclaim budget for the answer, not to
+# make the judge shallow. Every broken case in Phase 9C was blocked on a
+# genuine semantic defect, and losing that is a far worse outcome than a
+# truncation, which at least fails closed.
+#
+# Scoped to the judge deliberately. The generation agents are untouched --
+# see the guard test in tests/test_agents.py.
+JUDGE_EFFORT: Effort = "medium"
 
 RESPONSE_INSTRUCTION = (
     "\n\nRespond with ONLY a JSON object, no prose before or after, no markdown fences:\n"
@@ -153,6 +170,7 @@ def run_judge_gates(
             # (~730-800) plus a worst-case answer. A call that still
             # overruns truncates and fails closed, as before.
             max_tokens=1600,
+            effort=JUDGE_EFFORT,
             agent_name=f"judge:{lens_name}",
             run_id=run_id,
             task_id=task_id,

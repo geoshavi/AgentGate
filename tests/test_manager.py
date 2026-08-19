@@ -29,6 +29,7 @@ class _FakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        effort: str | None = None,
     ) -> GenerationResult:
         self.calls += 1
         return GenerationResult(

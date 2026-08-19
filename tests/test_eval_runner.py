@@ -596,7 +596,10 @@ class _SequencedFakeProvider:
         self._responses = list(responses)
         self._calls = 0
 
-    def generate(self, messages, model, system=None, max_tokens=4096, temperature=0.0, timeout_seconds=None):
+    def generate(
+        self, messages, model, system=None, max_tokens=4096, temperature=0.0,
+        timeout_seconds=None, effort=None,
+    ):
         text = self._responses[self._calls]
         self._calls += 1
         return GenerationResult(
@@ -617,7 +620,10 @@ class _FailingSequencedFakeProvider:
         self._items = list(items)
         self._calls = 0
 
-    def generate(self, messages, model, system=None, max_tokens=4096, temperature=0.0, timeout_seconds=None):
+    def generate(
+        self, messages, model, system=None, max_tokens=4096, temperature=0.0,
+        timeout_seconds=None, effort=None,
+    ):
         item = self._items[self._calls]
         self._calls += 1
         if isinstance(item, Exception):

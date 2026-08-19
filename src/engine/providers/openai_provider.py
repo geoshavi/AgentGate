@@ -1,4 +1,4 @@
-from engine.providers.base import GenerationResult, Message
+from engine.providers.base import Effort, GenerationResult, Message
 
 
 class OpenAIProvider:
@@ -15,5 +15,6 @@ class OpenAIProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        effort: Effort | None = None,
     ) -> GenerationResult:
         raise NotImplementedError("OpenAIProvider is a placeholder for M2 (multi-provider routing).")

@@ -27,6 +27,13 @@ concern, and nothing outside providers/ and the Gateway needs it.
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+# Reasoning depth for one call. Spelled as a Literal rather than ``str`` so a
+# typo is a type error instead of a provider-side 400, and defined here rather
+# than imported from the SDK because Rule A forbids anything outside runtime/
+# and providers/ from importing a provider SDK. ``None`` means "say nothing" --
+# the request omits the field entirely and the provider's own default applies.
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+
 
 @dataclass(frozen=True)
 class Message:

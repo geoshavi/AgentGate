@@ -33,6 +33,7 @@ class _FakeProvider:
         self._stop_reason = stop_reason
         self._thinking_tokens = thinking_tokens
         self.calls = 0
+        self.efforts: list[str | None] = []
 
     def generate(
         self,
@@ -42,8 +43,10 @@ class _FakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        effort: str | None = None,
     ) -> GenerationResult:
         self.calls += 1
+        self.efforts.append(effort)
         if self._raises is not None:
             raise self._raises
         return GenerationResult(
@@ -286,3 +289,24 @@ def test_connect_backfills_observability_columns_on_a_preexisting_database(tmp_p
 
     assert m.stop_reason == "end_turn"
     assert m.thinking_tokens == 3
+
+
+def test_gateway_forwards_effort_per_call_and_defaults_to_none() -> None:
+    provider = _FakeProvider()
+    gateway = LLMGateway(provider)
+
+    gateway.generate(
+        budget=_budget(),
+        messages=[Message(role="user", content="hi")],
+        model=MODEL,
+        agent_name="judge:security",
+        effort="medium",
+    )
+    gateway.generate(
+        budget=_budget(),
+        messages=[Message(role="user", content="hi")],
+        model=MODEL,
+        agent_name="CodingAgent",
+    )
+
+    assert provider.efforts == ["medium", None]

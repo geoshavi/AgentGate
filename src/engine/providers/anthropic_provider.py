@@ -1,6 +1,6 @@
 from anthropic import NOT_GIVEN, Anthropic, omit
 
-from engine.providers.base import GenerationResult, Message
+from engine.providers.base import Effort, GenerationResult, Message
 
 # Sampling parameters were removed from the request surface on these model
 # families -- a non-default `temperature` returns a 400. Listing the models
@@ -31,6 +31,7 @@ class AnthropicProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        effort: Effort | None = None,
     ) -> GenerationResult:
         # The SDK's `timeout` default is a NOT_GIVEN sentinel, not None --
         # explicitly passing timeout=None disables the timeout entirely
@@ -42,6 +43,10 @@ class AnthropicProvider:
             messages=[{"role": m.role, "content": m.content} for m in messages],
             max_tokens=max_tokens,
             temperature=omit if model.startswith(_TEMPERATURE_REJECTED_BY) else temperature,
+            # Omitted entirely unless the caller asked, so a call that says
+            # nothing about effort keeps exactly the request shape it had
+            # before -- there is no provider-wide default here to drift.
+            output_config={"effort": effort} if effort is not None else omit,
             timeout=timeout_seconds if timeout_seconds is not None else NOT_GIVEN,
         )
         text = "".join(block.text for block in response.content if block.type == "text")
