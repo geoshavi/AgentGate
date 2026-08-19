@@ -2,7 +2,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 
-from engine.llm_types import Message
+from engine.llm_types import GenerationResult, Message
 from engine.runtime.budget import BudgetController
 from engine.runtime.gateway import LLMGateway
 from engine.verification.schema import enforce_critic_schema
@@ -87,6 +87,23 @@ def _extract_json_objects(text: str) -> list[str]:
     return objects
 
 
+# A lens call is retried at most this many times, and only when the provider
+# itself reports it ran out of output budget. Phase 9C.1/9C.2 measured where
+# that budget goes: Sonnet 5 thinks adaptively, those thinking tokens count
+# against max_tokens, and on one lens 1599 of 1600 were spent thinking with no
+# answer emitted at all. Thinking is rare (zero on 85% of calls) but unbounded
+# when it happens, so an identical resample is not a coin flip on the same
+# outcome -- it is a fresh draw from a heavy-tailed distribution.
+#
+# Deliberately NOT a general retry. Rejected alternatives, each already
+# measured: lowering effort produced a false pass (9C.2), and raising the cap
+# let thinking expand to fill it (9C.3). Retrying on *any* schema failure
+# would also re-roll responses the model completed and simply got wrong,
+# which is a different and far less safe intervention.
+MAX_JUDGE_RETRIES = 1
+_BUDGET_EXHAUSTED = "max_tokens"
+
+
 def _parse_critic(response_text: str) -> tuple[dict, list[str]]:
     objects = _extract_json_objects(response_text)
     if not objects:
@@ -132,34 +149,60 @@ def run_judge_gates(
         # critics plus a per-lens error marker instead of raising) is
         # future work: it would change what gate() sees when a lens fails,
         # which is a verdict-semantics decision, not an observability one.
-        response = gateway.generate(
-            budget=budget,
-            messages=[
-                Message(
-                    role="user",
-                    content=prompt + RESPONSE_INSTRUCTION,
-                )
-            ],
-            model=model,
-            system=lens_system,
-            # 1600, not 800: Sonnet 5 spends a large and variable share of
-            # its output budget before the JSON begins. In the Phase 9B
-            # canary 11 of 120 lens calls hit the old 800 cap, 9 of them
-            # returning zero text, and gate() fails a truncated lens closed
-            # to UNVERIFIED -- so the cap was deciding verdicts. The same
-            # case/lens pairs need only 26-587 output tokens of JSON under
-            # Haiku, and the largest complete JSON measured on this dataset
-            # is ~800, so 1600 covers the observed pre-JSON consumption
-            # (~730-800) plus a worst-case answer. A call that still
-            # overruns truncates and fails closed, as before.
-            max_tokens=1600,
-            agent_name=f"judge:{lens_name}",
-            run_id=run_id,
-            task_id=task_id,
-            conn=conn,
-            timeout_seconds=timeout_seconds,
-        )
+        def ask(agent_name: str, lens_system: str = lens_system) -> GenerationResult:
+            """One lens call. The retry passes the identical arguments -- same
+            prompt, system, cap, model and sampling -- so the only thing that
+            differs between attempts is the provider's own sampling."""
+            return gateway.generate(
+                budget=budget,
+                messages=[
+                    Message(
+                        role="user",
+                        content=prompt + RESPONSE_INSTRUCTION,
+                    )
+                ],
+                model=model,
+                system=lens_system,
+                # 1600, not 800: Sonnet 5 spends a large and variable share of
+                # its output budget before the JSON begins. In the Phase 9B
+                # canary 11 of 120 lens calls hit the old 800 cap, 9 of them
+                # returning zero text, and gate() fails a truncated lens closed
+                # to UNVERIFIED -- so the cap was deciding verdicts. The same
+                # case/lens pairs need only 26-587 output tokens of JSON under
+                # Haiku, and the largest complete JSON measured on this dataset
+                # is ~800, so 1600 covers the observed pre-JSON consumption
+                # (~730-800) plus a worst-case answer. A call that still
+                # overruns truncates and fails closed, as before.
+                max_tokens=1600,
+                agent_name=agent_name,
+                run_id=run_id,
+                task_id=task_id,
+                conn=conn,
+                timeout_seconds=timeout_seconds,
+            )
+
+        response = ask(f"judge:{lens_name}")
         critic, errors = _parse_critic(response.text)
+
+        # Retry only an unparseable response that the provider says ran out of
+        # output budget. A parseable critic is final no matter how it
+        # terminated -- replacing one could drop a HIGH defect the model
+        # already committed to, which is the failure this ordering forbids.
+        if errors and response.stop_reason == _BUDGET_EXHAUSTED:
+            for _ in range(MAX_JUDGE_RETRIES):
+                try:
+                    retried = ask(f"judge:{lens_name}:retry")
+                except Exception:  # noqa: BLE001 - see below
+                    # A retry is a bonus attempt: if it cannot be made at all,
+                    # keep the first attempt's schema errors so the run lands
+                    # exactly where it would have with no retry, rather than
+                    # converting a fail-closed lens into a failed case.
+                    break
+                retry_critic, retry_errors = _parse_critic(retried.text)
+                if not retry_errors:
+                    critic, errors = retry_critic, retry_errors
+                break
+
         if errors:
             schema_errors.extend(f"judge:{lens_name}: {e}" for e in errors)
             if on_schema_failure is not None:

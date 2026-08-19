@@ -687,3 +687,197 @@ def test_run_judge_gates_output_does_not_depend_on_response_metadata() -> None:
         outputs.append(json.dumps([critics, schema_errors], sort_keys=True))
 
     assert len(set(outputs)) == 1
+
+
+# --- Phase 9E: retry a judge lens only when it truncated in max_tokens ------
+#
+# Every test here holds the retry to one rule: it may only ever turn an
+# unparseable lens into a parseable one. It must never fire on a lens that
+# already produced a valid critic, and a retry that fails for any reason must
+# land exactly where the run would have landed with no retry at all.
+
+_TRUNCATED = "max_tokens"
+_COMPLETE = "end_turn"
+
+
+def _blocking_critic_json() -> str:
+    return json.dumps(
+        {
+            "defects": [
+                {
+                    "id": "C1",
+                    "category": "CORRECTNESS",
+                    "severity": "HIGH",
+                    "location": "solution.py:1",
+                    "fix": "fix the bug",
+                }
+            ],
+            "verdict": "FAIL",
+        }
+    )
+
+
+class _SequencedProvider:
+    """Returns queued (text, stop_reason) responses in order, then falls back
+    to a clean OK critic. Records every call so a test can prove exactly how
+    many were made and with what prompt."""
+
+    name = "fake"
+
+    def __init__(
+        self, queued: list[tuple[str, str | None]], raises: Exception | None = None
+    ) -> None:
+        self._queued = list(queued)
+        self._raises_after_queue = raises
+        self.calls: list[tuple[str | None, int]] = []  # (system prompt, max_tokens)
+
+    def generate(
+        self,
+        messages: list[Message],
+        model: str,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+        timeout_seconds: float | None = None,
+    ) -> GenerationResult:
+        self.calls.append((system, max_tokens))
+        if self._queued:
+            text, stop_reason = self._queued.pop(0)
+        elif self._raises_after_queue is not None:
+            # Fires exactly once -- the call right after the queue drains, i.e.
+            # the retry. Later lenses must still be able to run normally, or
+            # the test could not tell "the retry failed" apart from "every
+            # remaining call failed".
+            exc, self._raises_after_queue = self._raises_after_queue, None
+            raise exc
+        else:
+            text, stop_reason = _ok_critic_json(), _COMPLETE
+        return GenerationResult(
+            text=text,
+            model=model,
+            provider=self.name,
+            input_tokens=1,
+            output_tokens=1,
+            stop_reason=stop_reason,
+            thinking_tokens=0,
+        )
+
+
+def _run_lenses(provider: _SequencedProvider) -> tuple[list[dict], list[str]]:
+    return run_judge_gates(
+        LLMGateway(provider),
+        _budget(),
+        _PRICED_MODEL,
+        "do the thing",
+        "print('hi')",
+        run_id=1,
+        task_id="task-1",
+        conn=None,
+    )
+
+
+def test_a_complete_valid_response_is_never_retried() -> None:
+    provider = _SequencedProvider([])  # all three lenses: valid + end_turn
+    critics, schema_errors = _run_lenses(provider)
+
+    assert len(provider.calls) == 3, "a valid end_turn response must not be retried"
+    assert schema_errors == []
+    assert len(critics) == 3
+
+
+def test_b_truncated_unparseable_response_triggers_exactly_one_retry() -> None:
+    provider = _SequencedProvider([("half a json {", _TRUNCATED)])
+    _run_lenses(provider)
+
+    assert len(provider.calls) == 4  # 3 lenses + exactly 1 retry for the first
+
+
+def test_c_successful_retry_critic_is_used() -> None:
+    provider = _SequencedProvider(
+        [("half a json {", _TRUNCATED), (_blocking_critic_json(), _COMPLETE)]
+    )
+    critics, schema_errors = _run_lenses(provider)
+
+    assert schema_errors == [], "a rescued lens must not leave a schema error behind"
+    assert len(critics) == 3
+    assert critics[0]["defects"][0]["severity"] == "HIGH"
+    assert critics[0]["defects"][0]["lens"] == "correctness", "retry keeps lens tagging"
+
+
+def test_d_retry_that_truncates_again_fails_closed() -> None:
+    provider = _SequencedProvider(
+        [("half a json {", _TRUNCATED), ("still half a json {", _TRUNCATED)]
+    )
+    critics, schema_errors = _run_lenses(provider)
+
+    assert len(provider.calls) == 4, "must not retry a second time"
+    assert any(e.startswith("judge:correctness:") for e in schema_errors)
+    assert len(critics) == 2, "the truncated lens contributes no critic"
+
+
+def test_e_retry_returning_malformed_schema_fails_closed() -> None:
+    malformed = json.dumps({"defects": [], "verdict": "MAYBE"})
+    provider = _SequencedProvider([("half a json {", _TRUNCATED), (malformed, _COMPLETE)])
+    critics, schema_errors = _run_lenses(provider)
+
+    assert len(provider.calls) == 4
+    assert any(e.startswith("judge:correctness:") for e in schema_errors)
+    assert len(critics) == 2
+
+
+def test_f_provider_error_on_the_retry_falls_back_to_fail_closed() -> None:
+    """A retry is a bonus attempt. If it cannot be made at all, the run must
+    land exactly where it would have landed without the retry -- never worse."""
+    provider = _SequencedProvider([("half a json {", _TRUNCATED)], raises=RuntimeError("boom"))
+    critics, schema_errors = _run_lenses(provider)
+
+    assert any(e.startswith("judge:correctness:") for e in schema_errors)
+    assert len(critics) == 2, "the other two lenses must still run"
+
+
+def test_g_valid_blocking_response_is_never_retried_or_replaced() -> None:
+    """Even when the provider reports max_tokens, a response that parses is
+    final. Losing a HIGH defect to a retry is the failure this forbids."""
+    provider = _SequencedProvider([(_blocking_critic_json(), _TRUNCATED)])
+    critics, schema_errors = _run_lenses(provider)
+
+    assert len(provider.calls) == 3, "a parseable critic must never be retried"
+    assert schema_errors == []
+    assert critics[0]["defects"][0]["severity"] == "HIGH"
+
+
+def test_h_valid_ok_response_is_never_retried() -> None:
+    provider = _SequencedProvider([(_ok_critic_json(), _TRUNCATED)])
+    critics, schema_errors = _run_lenses(provider)
+
+    assert len(provider.calls) == 3
+    assert schema_errors == []
+    assert critics[0]["defects"] == []
+
+
+def test_i_retry_count_never_exceeds_one_per_lens() -> None:
+    """All three lenses truncate, and so do all three retries."""
+    provider = _SequencedProvider([("{", _TRUNCATED)] * 6)
+    critics, schema_errors = _run_lenses(provider)
+
+    assert len(provider.calls) == 6, "3 lenses x (1 initial + 1 retry), never more"
+    assert critics == []
+    assert len(schema_errors) == 3
+
+
+def test_unparseable_response_that_completed_normally_is_not_retried() -> None:
+    """The trigger is the provider's terminal state, not the parse failure.
+    A model that simply answered in prose gets no second attempt."""
+    provider = _SequencedProvider([("I think this looks fine", _COMPLETE)])
+    _run_lenses(provider)
+
+    assert len(provider.calls) == 3
+
+
+def test_retry_reuses_the_same_prompt_and_cap_as_the_first_attempt() -> None:
+    provider = _SequencedProvider([("half a json {", _TRUNCATED)])
+    _run_lenses(provider)
+
+    first, retry = provider.calls[0], provider.calls[1]
+    assert first == retry, "retry must reuse the same system prompt and max_tokens"
+    assert first[1] == 1600, "the cap must remain 1600"
