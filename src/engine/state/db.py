@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS agent_execution_metrics (
     actual_spend TEXT,
     status TEXT NOT NULL,
     error TEXT,
+    stop_reason TEXT,
+    thinking_tokens INTEGER NOT NULL DEFAULT 0,
+    text_chars INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -183,12 +186,35 @@ CREATE INDEX IF NOT EXISTS idx_eval_case_schema_failures_result ON eval_case_sch
 """
 
 
+# Columns added to an already-created table after it shipped. SCHEMA above uses
+# CREATE TABLE IF NOT EXISTS, which is a no-op on an existing database -- so a
+# new column reaches a fresh .db and never reaches .engine/state.db, and the
+# very next INSERT there fails. Each entry is (table, column, DDL type).
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("agent_execution_metrics", "stop_reason", "TEXT"),
+    ("agent_execution_metrics", "thinking_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("agent_execution_metrics", "text_chars", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add any missing column from _ADDED_COLUMNS. Idempotent and additive --
+    it never drops, renames, or rewrites a column, so rows written by an older
+    version keep their values and simply carry the column default.
+    """
+    for table, column, ddl in _ADDED_COLUMNS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if existing and column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 @contextmanager
 def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:
@@ -267,8 +293,9 @@ def record_agent_execution_metric(conn: sqlite3.Connection, metric: AgentExecuti
     conn.execute(
         "INSERT INTO agent_execution_metrics "
         "(run_id, task_id, agent_name, model, input_tokens, output_tokens, "
-        "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error, "
+        "stop_reason, thinking_tokens, text_chars) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             metric.run_id,
             metric.task_id,
@@ -282,13 +309,17 @@ def record_agent_execution_metric(conn: sqlite3.Connection, metric: AgentExecuti
             str(metric.actual_spend) if metric.actual_spend is not None else None,
             metric.status,
             metric.error,
+            metric.stop_reason,
+            metric.thinking_tokens,
+            metric.text_chars,
         ),
     )
 
 
 _METRIC_COLUMNS = (
     "run_id, task_id, agent_name, model, input_tokens, output_tokens, "
-    "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error"
+    "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error, "
+    "stop_reason, thinking_tokens, text_chars"
 )
 
 
@@ -306,6 +337,9 @@ def _row_to_metric(row: tuple) -> AgentExecutionMetric:
         actual_spend=Decimal(row[9]) if row[9] is not None else None,
         status=row[10],
         error=row[11],
+        stop_reason=row[12],
+        thinking_tokens=row[13],
+        text_chars=row[14],
     )
 
 

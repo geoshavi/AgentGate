@@ -43,4 +43,12 @@ class GenerationResult:
     output_tokens: int
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # Termination and reasoning metadata, defaulted so a provider that cannot
+    # report them is indistinguishable from the pre-9C.2 shape. ``None`` means
+    # "not reported", never "ended normally" -- those are different claims and
+    # conflating them is what made Phase 9C's truncations inferable only from
+    # ``output_tokens == max_tokens``. ``thinking_tokens`` is a count, not
+    # content: the reasoning text itself is deliberately never carried here.
+    stop_reason: str | None = None
+    thinking_tokens: int = 0
     raw: Any = field(default=None, repr=False)

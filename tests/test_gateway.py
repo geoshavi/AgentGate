@@ -21,9 +21,17 @@ MODEL = "claude-sonnet-5"
 class _FakeProvider:
     name = "fake"
 
-    def __init__(self, text: str = "ok", raises: Exception | None = None) -> None:
+    def __init__(
+        self,
+        text: str = "ok",
+        raises: Exception | None = None,
+        stop_reason: str | None = None,
+        thinking_tokens: int = 0,
+    ) -> None:
         self._text = text
         self._raises = raises
+        self._stop_reason = stop_reason
+        self._thinking_tokens = thinking_tokens
         self.calls = 0
 
     def generate(
@@ -46,6 +54,8 @@ class _FakeProvider:
             output_tokens=7,
             cache_read_tokens=1,
             cache_creation_tokens=2,
+            stop_reason=self._stop_reason,
+            thinking_tokens=self._thinking_tokens,
         )
 
 
@@ -180,3 +190,99 @@ def test_from_config_wraps_the_provider_built_by_the_registry(monkeypatch) -> No
         budget=_budget(), messages=[Message(role="user", content="hi")], model=MODEL, agent_name="x"
     )
     assert sentinel_provider.calls == 1
+
+
+def test_generate_records_stop_reason_and_thinking_token_metadata(tmp_path: Path) -> None:
+    """The 9C.1 diagnosis had to infer truncation from output_tokens == max_tokens.
+    A truncated call must record that fact directly instead."""
+    provider = _FakeProvider(text="partial", stop_reason="max_tokens", thinking_tokens=1400)
+    gateway = LLMGateway(provider)
+    db_path = tmp_path / "state.db"
+
+    with db.connect(db_path) as conn:
+        run_id = db.create_run(conn, "task", "anthropic", MODEL)
+        gateway.generate(
+            budget=_budget(),
+            messages=[Message(role="user", content="hi")],
+            model=MODEL,
+            agent_name="judge:security",
+            conn=conn,
+            run_id=run_id,
+            task_id="task-1",
+        )
+        conn.commit()
+
+    with db.connect(db_path) as conn:
+        m = db.get_agent_execution_metrics(conn, run_id)[0]
+
+    assert m.stop_reason == "max_tokens"
+    assert m.thinking_tokens == 1400
+    assert m.text_chars == len("partial")
+
+
+def test_generate_records_absent_metadata_as_none_and_zero(tmp_path: Path) -> None:
+    """A provider that reports no stop_reason must produce NULL, never a
+    fabricated value -- 'unknown' and 'end_turn' are different claims."""
+    gateway = LLMGateway(_FakeProvider(text="ok"))
+    db_path = tmp_path / "state.db"
+
+    with db.connect(db_path) as conn:
+        run_id = db.create_run(conn, "task", "anthropic", MODEL)
+        gateway.generate(
+            budget=_budget(),
+            messages=[Message(role="user", content="hi")],
+            model=MODEL,
+            agent_name="CodingAgent",
+            conn=conn,
+            run_id=run_id,
+            task_id="task-1",
+        )
+        conn.commit()
+
+    with db.connect(db_path) as conn:
+        m = db.get_agent_execution_metrics(conn, run_id)[0]
+
+    assert m.stop_reason is None
+    assert m.thinking_tokens == 0
+    assert m.text_chars == 2
+
+
+def test_connect_backfills_observability_columns_on_a_preexisting_database(tmp_path: Path) -> None:
+    """SCHEMA uses CREATE TABLE IF NOT EXISTS, so new columns never reach an
+    existing .engine/state.db. Without a migration every future bench run on
+    the real database would fail on the INSERT."""
+    import sqlite3
+
+    db_path = tmp_path / "state.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.execute(
+        "CREATE TABLE agent_execution_metrics ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL, task_id TEXT NOT NULL, "
+        "agent_name TEXT NOT NULL, model TEXT NOT NULL, input_tokens INTEGER NOT NULL, "
+        "output_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL, "
+        "cache_creation_tokens INTEGER NOT NULL, latency_ms INTEGER NOT NULL, "
+        "actual_spend TEXT, status TEXT NOT NULL, error TEXT, "
+        "created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    legacy.commit()
+    legacy.close()
+
+    gateway = LLMGateway(_FakeProvider(text="x", stop_reason="end_turn", thinking_tokens=3))
+    with db.connect(db_path) as conn:
+        run_id = db.create_run(conn, "task", "anthropic", MODEL)
+        gateway.generate(
+            budget=_budget(),
+            messages=[Message(role="user", content="hi")],
+            model=MODEL,
+            agent_name="judge:correctness",
+            conn=conn,
+            run_id=run_id,
+            task_id="task-1",
+        )
+        conn.commit()
+
+    with db.connect(db_path) as conn:
+        m = db.get_agent_execution_metrics(conn, run_id)[0]
+
+    assert m.stop_reason == "end_turn"
+    assert m.thinking_tokens == 3

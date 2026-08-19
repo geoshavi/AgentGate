@@ -147,6 +147,9 @@ class LLMGateway:
             actual_spend=spend,
             status=status,
             error=error,
+            stop_reason=result.stop_reason if result else None,
+            thinking_tokens=result.thinking_tokens if result else 0,
+            text_chars=len(result.text) if result else 0,
         )
         db.record_agent_execution_metric(conn, metric)
 

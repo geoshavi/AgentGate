@@ -65,8 +65,12 @@ def test_enforce_critic_schema_rejects_non_dict() -> None:
 class _FakeProvider:
     name = "fake"
 
-    def __init__(self, response_text: str) -> None:
+    def __init__(
+        self, response_text: str, stop_reason: str | None = None, thinking_tokens: int = 0
+    ) -> None:
         self._response_text = response_text
+        self._stop_reason = stop_reason
+        self._thinking_tokens = thinking_tokens
 
     def generate(
         self,
@@ -78,7 +82,13 @@ class _FakeProvider:
         timeout_seconds: float | None = None,
     ) -> GenerationResult:
         return GenerationResult(
-            text=self._response_text, model=model, provider=self.name, input_tokens=1, output_tokens=1
+            text=self._response_text,
+            model=model,
+            provider=self.name,
+            input_tokens=1,
+            output_tokens=1,
+            stop_reason=self._stop_reason,
+            thinking_tokens=self._thinking_tokens,
         )
 
 
@@ -570,3 +580,110 @@ def test_silent_failure_detail_round_trips_through_the_gate_record(tmp_path: Pat
         stored = db.get_eval_case_automated_gates(conn, case_result_id)
 
     assert stored == [VerificationResult("mypy", False, "(no output, exit 2)")]
+
+
+_PRICED_MODEL = "claude-haiku-4-5-20251001"
+
+# --- Phase 9C.2 step 1: the observability metadata must be inert -------------
+# These are the "cannot alter a verdict" proofs. Each one holds the response
+# text fixed and varies ONLY the new metadata; any divergence means the
+# observability commit leaked into the decision path.
+
+_TRUNCATION_METADATA = [
+    (None, 0),               # provider reported nothing (pre-change shape)
+    ("end_turn", 0),         # completed, no thinking
+    ("end_turn", 900),       # completed, thought a lot
+    ("max_tokens", 1600),    # the exact 9C truncation signature
+    ("refusal", 12),         # an unrelated terminal reason
+]
+
+
+def _verify_with(metadata, response_text: str, monkeypatch, tmp_path: Path):
+    stop_reason, thinking_tokens = metadata
+    monkeypatch.setattr(
+        pipeline, "run_automated_gates", lambda workspace: [VerificationResult("ruff", True, "ok")]
+    )
+    return pipeline.run_verification(
+        tmp_path,
+        LLMGateway(_FakeProvider(response_text, stop_reason, thinking_tokens)),
+        _budget(),
+        _PRICED_MODEL,
+        "task",
+        run_id=1,
+        task_id="task-1",
+        conn=None,
+    )
+
+
+def test_verdict_is_identical_for_every_stop_reason_when_the_text_is_clean(
+    monkeypatch, tmp_path: Path
+) -> None:
+    results = [
+        _verify_with(m, _ok_critic_json(), monkeypatch, tmp_path) for m in _TRUNCATION_METADATA
+    ]
+    statuses = {r[0] for r in results}
+    merged = {json.dumps(r[1], sort_keys=True) for r in results}
+
+    assert statuses == {"OK"}, f"stop_reason/thinking metadata changed the status: {statuses}"
+    assert len(merged) == 1, "stop_reason/thinking metadata changed the merged critic output"
+
+
+def test_verdict_is_identical_for_every_stop_reason_when_the_text_is_blocking(
+    monkeypatch, tmp_path: Path
+) -> None:
+    blocking = json.dumps(
+        {
+            "defects": [
+                {
+                    "id": "C1",
+                    "category": "CORRECTNESS",
+                    "severity": "HIGH",
+                    "location": "solution.py:1",
+                    "fix": "fix the bug",
+                }
+            ],
+            "verdict": "FAIL",
+        }
+    )
+
+    results = [_verify_with(m, blocking, monkeypatch, tmp_path) for m in _TRUNCATION_METADATA]
+    statuses = {r[0] for r in results}
+    defect_counts = {len(r[1]["defects"]) for r in results}
+
+    assert statuses == {"UNVERIFIED"}, f"metadata changed the status: {statuses}"
+    assert defect_counts == {3}, "metadata changed how many defects survived merge"
+
+
+def test_verdict_is_identical_for_every_stop_reason_when_the_text_is_unparseable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A stop_reason of 'max_tokens' must not become a second, independent
+    route to UNVERIFIED. The schema error alone decides -- exactly as before."""
+    results = [
+        _verify_with(m, "I think this looks fine", monkeypatch, tmp_path)
+        for m in _TRUNCATION_METADATA
+    ]
+    statuses = {r[0] for r in results}
+    errors = {len(r[1].get("schema_errors", [])) for r in results}
+
+    assert statuses == {"UNVERIFIED"}
+    assert errors == {3}, "metadata changed the schema-error count"
+
+
+def test_run_judge_gates_output_does_not_depend_on_response_metadata() -> None:
+    """Same proof one layer down, bypassing the pipeline entirely."""
+    outputs = []
+    for stop_reason, thinking_tokens in _TRUNCATION_METADATA:
+        critics, schema_errors = run_judge_gates(
+            LLMGateway(_FakeProvider(_ok_critic_json(), stop_reason, thinking_tokens)),
+            _budget(),
+            _PRICED_MODEL,
+            "do the thing",
+            "print('hi')",
+            run_id=1,
+            task_id="task-1",
+            conn=None,
+        )
+        outputs.append(json.dumps([critics, schema_errors], sort_keys=True))
+
+    assert len(set(outputs)) == 1

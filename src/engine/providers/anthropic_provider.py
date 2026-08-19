@@ -45,6 +45,11 @@ class AnthropicProvider:
             timeout=timeout_seconds if timeout_seconds is not None else NOT_GIVEN,
         )
         text = "".join(block.text for block in response.content if block.type == "text")
+        # Thinking blocks are output tokens that never appear in `text` above,
+        # so `output_tokens` alone cannot say whether a response was spent on
+        # reasoning or on the answer. usage.output_tokens_details carries the
+        # split when the model produced any; it is absent otherwise.
+        details = response.usage.output_tokens_details
         return GenerationResult(
             text=text,
             model=model,
@@ -53,5 +58,7 @@ class AnthropicProvider:
             output_tokens=response.usage.output_tokens,
             cache_read_tokens=response.usage.cache_read_input_tokens or 0,
             cache_creation_tokens=response.usage.cache_creation_input_tokens or 0,
+            stop_reason=response.stop_reason,
+            thinking_tokens=details.thinking_tokens if details is not None else 0,
             raw=response,
         )
