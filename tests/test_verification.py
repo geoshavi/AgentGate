@@ -71,7 +71,6 @@ class _FakeProvider:
         self._response_text = response_text
         self._stop_reason = stop_reason
         self._thinking_tokens = thinking_tokens
-        self.efforts: list[str | None] = []
 
     def generate(
         self,
@@ -81,9 +80,7 @@ class _FakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
-        effort: str | None = None,
     ) -> GenerationResult:
-        self.efforts.append(effort)
         return GenerationResult(
             text=self._response_text,
             model=model,
@@ -277,7 +274,6 @@ class _SequencedFakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
-        effort: str | None = None,
     ) -> GenerationResult:
         text = self._responses[self._calls]
         self._calls += 1
@@ -691,25 +687,3 @@ def test_run_judge_gates_output_does_not_depend_on_response_metadata() -> None:
         outputs.append(json.dumps([critics, schema_errors], sort_keys=True))
 
     assert len(set(outputs)) == 1
-
-
-# --- Phase 9C.2 step 2: judge-only reasoning control ------------------------
-
-
-def test_every_judge_lens_call_requests_medium_effort() -> None:
-    """Sonnet 5 defaults to effort=high with adaptive thinking, which is what
-    consumed the whole 1600-token budget on the Phase 9C truncations."""
-    provider = _FakeProvider(_ok_critic_json())
-
-    run_judge_gates(
-        LLMGateway(provider),
-        _budget(),
-        _PRICED_MODEL,
-        "do the thing",
-        "print('hi')",
-        run_id=1,
-        task_id="task-1",
-        conn=None,
-    )
-
-    assert provider.efforts == ["medium", "medium", "medium"]

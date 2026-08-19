@@ -12,9 +12,9 @@ need these types to satisfy ``Provider``.
 
 from typing import Protocol
 
-from engine.llm_types import Effort, GenerationResult, Message
+from engine.llm_types import GenerationResult, Message
 
-__all__ = ["Effort", "GenerationResult", "Message", "Provider"]
+__all__ = ["GenerationResult", "Message", "Provider"]
 
 
 class Provider(Protocol):
@@ -28,5 +28,4 @@ class Provider(Protocol):
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
-        effort: Effort | None = None,
     ) -> GenerationResult: ...

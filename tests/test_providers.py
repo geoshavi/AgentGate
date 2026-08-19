@@ -112,30 +112,6 @@ def test_anthropic_provider_handles_a_response_with_no_thinking_details() -> Non
         assert result.thinking_tokens == 0
 
 
-def test_anthropic_provider_sends_output_config_only_when_effort_is_requested() -> None:
-    """omit, not a None/default value: sending output_config unconditionally
-    would change every non-judge call's request shape too."""
-    from anthropic import omit
-
-    with patch("engine.providers.anthropic_provider.Anthropic") as MockAnthropic:
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _fake_anthropic_response("hi")
-        MockAnthropic.return_value = mock_client
-
-        from engine.providers.anthropic_provider import AnthropicProvider
-
-        provider = AnthropicProvider(api_key="fake-key")
-        provider.generate(messages=[Message(role="user", content="hi")], model="claude-sonnet-5")
-        assert mock_client.messages.create.call_args.kwargs["output_config"] is omit
-
-        provider.generate(
-            messages=[Message(role="user", content="hi")],
-            model="claude-sonnet-5",
-            effort="medium",
-        )
-        assert mock_client.messages.create.call_args.kwargs["output_config"] == {"effort": "medium"}
-
-
 def test_build_provider_missing_key_raises() -> None:
     config = _config(anthropic_api_key=None)
     with pytest.raises(ValueError):

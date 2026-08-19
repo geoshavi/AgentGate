@@ -22,7 +22,6 @@ class _FakeProvider:
     def __init__(self, response_text: str) -> None:
         self._response_text = response_text
         self.last_system: str | None = None
-        self.efforts: list[str | None] = []
 
     def generate(
         self,
@@ -32,9 +31,7 @@ class _FakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
-        effort: str | None = None,
     ) -> GenerationResult:
-        self.efforts.append(effort)
         self.last_system = system
         return GenerationResult(
             text=self._response_text, model=model, provider=self.name, input_tokens=1, output_tokens=1
@@ -119,24 +116,3 @@ def test_agent_run_refuses_unsafe_paths(tmp_path: Path) -> None:
 
         assert output.skipped_paths == ["../escape.py"], agent_cls.__name__
         assert not (tmp_path / "escape.py").exists(), agent_cls.__name__
-
-
-def test_sub_agents_never_request_an_effort_level(tmp_path: Path) -> None:
-    """Phase 9C.2 scopes reasoning control to the judge. If effort leaked into
-    the provider as a default, every generation agent would silently change
-    behaviour too -- and the experiment would no longer isolate one variable."""
-    for agent_cls in _AGENT_CLASSES:
-        provider = _FakeProvider('FILE: a.py\n```\nx = 1\n```')
-        context = AgentContext(
-            task_text="do the thing",
-            workspace=tmp_path / agent_cls.__name__,
-            gateway=LLMGateway(provider),
-            budget=_budget(),
-            model="claude-sonnet-5",
-            run_id=1,
-            task_id="task-1",
-        )
-
-        agent_cls().run(context)
-
-        assert provider.efforts == [None], f"{agent_cls.__name__} requested an effort level"

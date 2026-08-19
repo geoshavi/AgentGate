@@ -19,7 +19,7 @@ import time
 from decimal import Decimal
 
 from engine.config import Config
-from engine.llm_types import Effort, GenerationResult, Message
+from engine.llm_types import GenerationResult, Message
 from engine.providers.base import Provider
 from engine.providers.registry import build_provider
 from engine.runtime.budget import BudgetController
@@ -60,7 +60,6 @@ class LLMGateway:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
-        effort: Effort | None = None,
         conn: sqlite3.Connection | None = None,
         run_id: int | None = None,
         task_id: str | None = None,
@@ -79,7 +78,6 @@ class LLMGateway:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 timeout_seconds=timeout_seconds,
-                effort=effort,
             )
         except Exception as exc:
             self._record_metric(
