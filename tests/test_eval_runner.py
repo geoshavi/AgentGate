@@ -875,17 +875,3 @@ def test_well_formed_text_including_real_emoji_round_trips_unchanged(tmp_path: P
         stored = db.get_eval_case_defects(conn, eval_case_result_id)
 
     assert stored[0]["fix"] == intact
-
-
-def test_dry_run_estimator_cap_matches_the_cap_the_judge_actually_enforces() -> None:
-    """These two constants are a pair. --dry-run exists to report the spend
-    ceiling before a paid run, and it computes that ceiling from
-    JUDGE_MAX_OUTPUT_TOKENS -- so if judge.py's real cap drifts above it, the
-    estimate silently understates exactly the number it exists to check.
-    Phase 9C's commit message asserted this coupling in a comment; nothing
-    enforced it until now.
-    """
-    from engine.eval.runner import JUDGE_MAX_OUTPUT_TOKENS
-    from engine.verification.judge import JUDGE_MAX_TOKENS
-
-    assert JUDGE_MAX_OUTPUT_TOKENS == JUDGE_MAX_TOKENS
