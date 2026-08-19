@@ -32,6 +32,26 @@ LENSES = {
     ),
 }
 
+# Output ceiling for one judge lens call. Named rather than inline so
+# eval/runner.py's dry-run estimator can be pinned to it by a test -- the two
+# must stay equal or --dry-run understates the very ceiling it exists to check.
+#
+# History. 800 (through Phase 9B) truncated 11 of 120 lens calls under Sonnet
+# 5. 1600 (Phase 9C) cut that to 3. Phase 9C.2 then measured, rather than
+# inferred, where the budget goes: Sonnet 5 runs adaptive thinking whenever a
+# request omits a thinking config, and those thinking tokens count here while
+# never appearing in the response text. On security-04-clean x correctness,
+# 1599 of 1600 tokens were thinking and the model emitted no answer at all.
+#
+# 2000 is therefore a partial remedy by construction, not a sized fix: two of
+# the three Phase 9C truncations produced no visible text, so the data carries
+# no upper bound on what they need -- only a lower one. Reducing the thinking
+# itself (effort="medium") was tried in Phase 9C.2 and rejected: it produced a
+# false pass on quality-04-broken by dropping one defect from HIGH to MEDIUM,
+# and left quality-01-broken blocked only by fail-closed behaviour. A cap that
+# is still too small truncates and fails closed, which is the safe direction.
+JUDGE_MAX_TOKENS = 2000
+
 RESPONSE_INSTRUCTION = (
     "\n\nRespond with ONLY a JSON object, no prose before or after, no markdown fences:\n"
     '{"defects": [{"id": "C1", "category": "CORRECTNESS|SECURITY|CODE-QUALITY", '
@@ -142,17 +162,7 @@ def run_judge_gates(
             ],
             model=model,
             system=lens_system,
-            # 1600, not 800: Sonnet 5 spends a large and variable share of
-            # its output budget before the JSON begins. In the Phase 9B
-            # canary 11 of 120 lens calls hit the old 800 cap, 9 of them
-            # returning zero text, and gate() fails a truncated lens closed
-            # to UNVERIFIED -- so the cap was deciding verdicts. The same
-            # case/lens pairs need only 26-587 output tokens of JSON under
-            # Haiku, and the largest complete JSON measured on this dataset
-            # is ~800, so 1600 covers the observed pre-JSON consumption
-            # (~730-800) plus a worst-case answer. A call that still
-            # overruns truncates and fails closed, as before.
-            max_tokens=1600,
+            max_tokens=JUDGE_MAX_TOKENS,
             agent_name=f"judge:{lens_name}",
             run_id=run_id,
             task_id=task_id,
