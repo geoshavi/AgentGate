@@ -28,8 +28,14 @@ class SessionStatus(str, Enum):
 
     RUNNING = "RUNNING"
     PASSED = "PASSED"  # set only from verdict.gate's return value (P4)
+    # The agent finished its own work and said so. Verification has NOT run --
+    # this is the terminal success of P2 and must never be read as PASSED.
+    COMPLETED_UNVERIFIED = "COMPLETED_UNVERIFIED"
     UNVERIFIED = "UNVERIFIED"
     ABORTED_TURNS = "ABORTED_TURNS"
+    ABORTED_TOOL_CALLS = "ABORTED_TOOL_CALLS"
+    ABORTED_TOOL_FAILURES = "ABORTED_TOOL_FAILURES"
+    ABORTED_REPEAT = "ABORTED_REPEAT"
     ABORTED_BUDGET = "ABORTED_BUDGET"
     ABORTED_DEADLINE = "ABORTED_DEADLINE"
     ABORTED_POLICY = "ABORTED_POLICY"

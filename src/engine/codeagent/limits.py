@@ -43,6 +43,25 @@ class Limits:
     # Command execution.
     command_timeout_seconds: float = 120.0
 
+    # Session loop (P2). Every one of these is terminal when reached -- see
+    # session.py, where each maps to exactly one SessionStatus.
+    #
+    # max_tool_calls is deliberately lower than max_turns: a turn is one model
+    # call, a tool call is one execution, and turns are also spent on parse
+    # errors and the final response. Setting them equal would make one of the
+    # two bounds unreachable, which is a bound that cannot be tested and
+    # therefore is not really a bound.
+    max_turns: int = 25
+    max_tool_calls: int = 20
+    max_parse_errors: int = 3
+    max_consecutive_tool_failures: int = 3
+    max_repeated_calls: int = 3
+    session_timeout_seconds: float = 600.0
+    # Output cap requested per model turn. Named separately from the budget's
+    # own ceiling because BudgetController.check_before_call uses it as the
+    # worst-case spend estimate before every call.
+    turn_max_tokens: int = 4_000
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))
