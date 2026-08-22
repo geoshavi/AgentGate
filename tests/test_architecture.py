@@ -60,6 +60,18 @@ alone:
           state). Eval is a *client* of the review flow, not a dependency
           of it; those three packages must stay usable without eval/ ever
           being on the import path.
+  Rule G: nothing under eval/, verification/, runtime/, state/ or
+          orchestrator/ may import engine.codeagent, and codeagent/ may not
+          reach providers/ or a provider SDK directly. The Coding Agent is a
+          leaf *client* of the verification system: it calls run_verification
+          and reads the verdict, and nothing in the verified-by path may
+          depend on it. If the thing being verified ever lands on the
+          verifier's import path, the benchmark stops measuring what it
+          claims to. Rule D already forbids engine.codeagent inside eval/ for
+          free (its allowlist names only eval/verification/runtime/state plus
+          engine.config), so this rule's eval/ clause is redundant by
+          construction and stated anyway -- the redundancy is what keeps the
+          guarantee if that allowlist is ever widened.
   Rule F: engine/llm_types.py must import nothing from engine.* -- it holds
           the gateway <-> provider data contract precisely because both
           sides may import it, which also makes it the one module in the
@@ -221,4 +233,47 @@ def test_rule_f_llm_types_stays_a_leaf() -> None:
         "engine/llm_types.py must import nothing from engine.* -- every layer is allowed to "
         "import it, so an engine.* import there becomes a back-channel between layers that "
         "Rules B-E keep apart:\n" + "\n".join(violations)
+    )
+
+
+def test_rule_g_codeagent_is_a_leaf_client() -> None:
+    violations = []
+    for path in _iter_source_files():
+        if _is_in_package(path, "codeagent"):
+            continue
+        if not any(
+            _is_in_package(path, pkg)
+            for pkg in ("eval", "verification", "runtime", "state", "orchestrator")
+        ):
+            continue
+        for name in _imported_module_names(path):
+            if name == "engine.codeagent" or name.startswith("engine.codeagent."):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule G)")
+    assert not violations, (
+        "eval/, verification/, runtime/, state/ and orchestrator/ must never import "
+        "codeagent/ -- the Coding Agent is a client of the verification system, never a "
+        "dependency of it. If the thing being verified is on the verifier's import path, "
+        "the benchmark stops measuring what it claims to:\n" + "\n".join(violations)
+    )
+
+
+def test_rule_g_codeagent_does_not_reach_a_provider() -> None:
+    # Rules A and B already cover this by placement; asserted separately so a
+    # failure names codeagent/ directly instead of surfacing as a generic
+    # Rule A/B violation, and so the guarantee survives any future
+    # relaxation of those rules' scope.
+    violations = []
+    for path in _iter_source_files():
+        if not _is_in_package(path, "codeagent"):
+            continue
+        for name in _imported_module_names(path):
+            if name == "engine.providers" or name.startswith("engine.providers."):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule G)")
+            if name in PROVIDER_SDK_MODULES or any(
+                name.startswith(f"{sdk}.") for sdk in PROVIDER_SDK_MODULES
+            ):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule G)")
+    assert not violations, (
+        "codeagent/ must reach a model only through runtime/gateway.py, never through "
+        "providers/ or a provider SDK directly:\n" + "\n".join(violations)
     )
