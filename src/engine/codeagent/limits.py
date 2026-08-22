@@ -75,6 +75,15 @@ class Limits:
     max_plan_context_chars: int = 4_000  # repository listing handed to the planner
     plan_max_tokens: int = 1_200
 
+    # Verification (P4). max_snapshot_bytes bounds the concatenated *.py
+    # snapshot that verification/pipeline.py inlines into every judge prompt.
+    # It is enforced by the caller because pipeline.py is on the measured path
+    # and must not change: above this size the session refuses to verify at all
+    # rather than verifying a truncated program, which would be a verdict about
+    # code that does not exist.
+    max_snapshot_bytes: int = 200_000
+    max_repair_rounds: int = 2
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))

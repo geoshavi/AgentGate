@@ -73,6 +73,7 @@ class CodingSession:
         log: SessionLog | None = None,
         clock: Callable[[], float] = time.monotonic,
         planning: PlanOutcome | None = None,
+        repair_feedback: str | None = None,
     ) -> None:
         self._task_text = task_text
         self._workspace = workspace
@@ -89,6 +90,11 @@ class CodingSession:
         self._clock = clock
         self._ctx = ToolContext(workspace=workspace, policy=policy, limits=limits)
         self._planning = planning
+        # Structured verification feedback from a previous round, rendered into
+        # the opening message. A repair round is an ordinary session over a
+        # workspace that was deliberately NOT reset, so the accumulated diff is
+        # what it continues from.
+        self._repair_feedback = repair_feedback
         self._state = TaskState(
             task_id=task_id,
             user_goal=task_text,
@@ -136,6 +142,8 @@ class CodingSession:
             # The plan is context, not authority: it is appended to the opening
             # message and read by nothing else in this loop.
             opening = f"{opening}\n\n{render_plan_context(self._planning)}"
+        if self._repair_feedback:
+            opening = f"{opening}\n\n{self._repair_feedback}"
         messages = [Message(role="user", content=opening)]
         consecutive_failures = 0
         last_signature: str | None = None

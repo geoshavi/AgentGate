@@ -3,6 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from codeagent_harness import MODEL, ScriptedProvider, StepClock, final_turn, plan_block
 
 from engine.codeagent import plan as plan_module
 from engine.codeagent.limits import Limits
@@ -21,83 +22,16 @@ from engine.codeagent.session import CodingSession
 from engine.codeagent.state import SessionStatus
 from engine.codeagent.tools.registry import TOOL_REGISTRY
 from engine.codeagent.workspace import Workspace
-from engine.llm_types import GenerationResult, Message
 from engine.runtime.budget import BudgetController
 from engine.runtime.gateway import LLMGateway
 
 TOOL_NAMES = sorted(TOOL_REGISTRY)
-MODEL = "claude-sonnet-5"  # must exist in runtime/budget.py's PRICE_TABLE
-
-# The scripted harness is duplicated from tests/test_codeagent_session.py rather
-# than imported. tests/ is not a package and has no conftest, so a cross-test
-# import only resolves when the repo root happens to be the working directory --
-# it breaks under `pytest /abs/path/to/test_codeagent_plan.py`. Sharing it
-# properly means a tests/ harness module plus an edit to P2's committed test
-# file, which is outside P3's scope; P4 needs the same harness and is the right
-# moment to consolidate all three.
-
-
-class ScriptedProvider:
-    """Offline stand-in for a real provider. Never touches a network."""
-
-    name = "scripted"
-
-    def __init__(self, responses: list[str], *, raise_on_call: int | None = None) -> None:
-        self._responses = responses
-        self._raise_on_call = raise_on_call
-        self.calls = 0
-        self.seen_messages: list[list[Message]] = []
-        self.seen_systems: list[str | None] = []
-
-    def generate(
-        self,
-        messages: list[Message],
-        model: str,
-        system: str | None = None,
-        max_tokens: int = 4096,
-        temperature: float = 0.0,
-        timeout_seconds: float | None = None,
-    ) -> GenerationResult:
-        self.calls += 1
-        self.seen_messages.append(list(messages))
-        self.seen_systems.append(system)
-        if self._raise_on_call == self.calls:
-            raise RuntimeError("provider exploded")
-        index = min(self.calls - 1, len(self._responses) - 1)
-        return GenerationResult(
-            text=self._responses[index],
-            model=model,
-            provider=self.name,
-            input_tokens=10,
-            output_tokens=20,
-            stop_reason="end_turn",
-        )
-
-
-class StepClock:
-    """Monotonic fake clock advancing a fixed step per read."""
-
-    def __init__(self, step: float = 1.0) -> None:
-        self.now = 0.0
-        self.step = step
-
-    def __call__(self) -> float:
-        self.now += self.step
-        return self.now
-
-
-def final_turn(summary: str = "done", files: list[str] | None = None) -> str:
-    return f'```final\n{json.dumps({"summary": summary, "files_changed": files or []})}\n```'
 
 
 def workspace(tmp_path: Path) -> Workspace:
     root = tmp_path / "ws"
     root.mkdir(exist_ok=True)
     return Workspace(root)
-
-
-def plan_block(**payload: object) -> str:
-    return f"```plan\n{json.dumps(payload)}\n```"
 
 
 def valid_payload(**overrides: object) -> dict:
