@@ -62,6 +62,19 @@ class Limits:
     # worst-case spend estimate before every call.
     turn_max_tokens: int = 4_000
 
+    # Planning (P3). A plan is advisory context, so every bound here exists to
+    # keep it small and cheap rather than to constrain what the loop may do.
+    # max_plan_attempts is 2 because the blueprint allows exactly one retry:
+    # the first attempt plus one more with the validation errors fed back.
+    max_plan_attempts: int = 2
+    max_plan_steps: int = 7
+    max_plan_files: int = 10
+    max_plan_validation_commands: int = 3
+    max_plan_notes: int = 5  # assumptions and risks, each
+    max_plan_text_chars: int = 500  # one goal, step, note or criterion
+    max_plan_context_chars: int = 4_000  # repository listing handed to the planner
+    plan_max_tokens: int = 1_200
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))

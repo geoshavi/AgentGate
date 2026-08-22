@@ -38,7 +38,24 @@ from engine.codeagent.tools.base import Tool
 # A block is a fence whose info string is exactly `tool` or `final`, anchored to
 # the start of a line so a fence inside a JSON string or an echoed tool result
 # cannot open one. Non-greedy, so the first closing fence ends the block.
-_BLOCK_RE = re.compile(r"^[ \t]*```(tool|final)[ \t]*\r?\n(.*?)^[ \t]*```", re.DOTALL | re.MULTILINE)
+_BLOCK_RE = re.compile(
+    r"^[ \t]*```([A-Za-z0-9_+-]+)[ \t]*\r?\n(.*?)^[ \t]*```", re.DOTALL | re.MULTILINE
+)
+
+
+def find_blocks(text: str, kinds: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Every fenced block in ``text`` whose info string is one of ``kinds``.
+
+    The single definition of what counts as a block, shared by the turn parser
+    below and by the planner (``plan.py``), so the two cannot drift into
+    disagreeing about what the model is allowed to emit.
+
+    Non-matching fences (```python and friends) are scanned and discarded
+    rather than ignored, which keeps the scan positions identical to matching
+    them directly -- a ```python block containing a stray fence still cannot
+    open a tool block.
+    """
+    return [(kind, body) for kind, body in _BLOCK_RE.findall(text) if kind in kinds]
 
 # Upper bound on a persisted final summary. It is a structured deliverable, not
 # reasoning, but it is still model-authored text and an unbounded field in a
@@ -70,7 +87,7 @@ def parse(text: str) -> ParsedTurn:
     if not isinstance(text, str) or not text.strip():
         return ParseError("the response was empty; emit exactly one ```tool block")
 
-    blocks = _BLOCK_RE.findall(text)
+    blocks = find_blocks(text, ("tool", "final"))
     if not blocks:
         return ParseError(
             "no ```tool or ```final block found; every turn must contain exactly one, "

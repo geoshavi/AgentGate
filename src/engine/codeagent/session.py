@@ -29,6 +29,7 @@ from collections.abc import Callable
 from engine.codeagent import protocol
 from engine.codeagent.limits import DEFAULT_LIMITS, Limits
 from engine.codeagent.log import SessionLog
+from engine.codeagent.plan import PlanOutcome, render_plan_context
 from engine.codeagent.policy import DEFAULT_POLICY, CommandPolicy
 from engine.codeagent.state import Phase, SessionStatus, TaskState, ToolCall, ToolResult
 from engine.codeagent.tools.base import Tool, ToolContext
@@ -71,6 +72,7 @@ class CodingSession:
         tools: dict[str, Tool] | None = None,
         log: SessionLog | None = None,
         clock: Callable[[], float] = time.monotonic,
+        planning: PlanOutcome | None = None,
     ) -> None:
         self._task_text = task_text
         self._workspace = workspace
@@ -86,12 +88,21 @@ class CodingSession:
         # for the deadline and for tool durations, nowhere else.
         self._clock = clock
         self._ctx = ToolContext(workspace=workspace, policy=policy, limits=limits)
+        self._planning = planning
         self._state = TaskState(
             task_id=task_id,
             user_goal=task_text,
             workspace=str(workspace.root),
             limits=limits.as_dict(),
         )
+        if planning is not None:
+            # Recorded whether or not it succeeded. A session that ran without a
+            # plan says so in its own report rather than looking like one that
+            # was never planned.
+            self._state.plan = planning.plan.as_dict() if planning.plan is not None else None
+            self._state.planning_status = planning.status.value
+            self._state.planning_errors = list(planning.errors)
+            self._state.usage.planning_attempts = planning.attempts
         self._deadline = 0.0
 
     @property
@@ -114,11 +125,18 @@ class CodingSession:
             workspace=state.workspace,
             model=self._model,
             limits=state.limits,
+            planning_status=state.planning_status,
+            planning_attempts=state.usage.planning_attempts,
         )
         self._set_phase(Phase.EXPLORING)
 
         system = protocol.build_system_prompt(self._tools)
-        messages = [Message(role="user", content=protocol.render_task(self._task_text))]
+        opening = protocol.render_task(self._task_text)
+        if self._planning is not None:
+            # The plan is context, not authority: it is appended to the opening
+            # message and read by nothing else in this loop.
+            opening = f"{opening}\n\n{render_plan_context(self._planning)}"
+        messages = [Message(role="user", content=opening)]
         consecutive_failures = 0
         last_signature: str | None = None
         repeats = 0

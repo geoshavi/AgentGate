@@ -119,6 +119,7 @@ class Usage:
     """
 
     turns_used: int = 0
+    planning_attempts: int = 0
     repairs_used: int = 0
     parse_errors: int = 0
     denied_commands: int = 0
@@ -141,6 +142,15 @@ class TaskState:
     test_results: list[TestRun] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     limits: dict[str, object] = field(default_factory=dict)
+    # Planning (P3). Held as plain data rather than a Plan object, matching how
+    # ``limits`` is held: this dataclass is the serialized report, and keeping
+    # it free of imports from the modules it describes is what lets any of them
+    # change without breaking the report's shape.
+    # ``planning_status`` is None only when planning was never attempted --
+    # never as a stand-in for a failure, which has its own explicit status.
+    plan: dict[str, Any] | None = None
+    planning_status: str | None = None
+    planning_errors: list[str] = field(default_factory=list)
     # Placeholders, filled by P4 / P5. None means "not reached".
     verification_status: str | None = None
     verification_defects: list[dict[str, Any]] = field(default_factory=list)
