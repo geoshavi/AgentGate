@@ -881,3 +881,166 @@ def test_retry_reuses_the_same_prompt_and_cap_as_the_first_attempt() -> None:
     first, retry = provider.calls[0], provider.calls[1]
     assert first == retry, "retry must reuse the same system prompt and max_tokens"
     assert first[1] == 1600, "the cap must remain 1600"
+
+
+# --- Phase 9G-prep: invariants the 9E suite left implicit --------------------
+#
+# Offline, zero-cost additions only. Each one pins an invariant that the Phase
+# 9E tests establish indirectly (or not at all); none of them required a
+# production change, and none of them relaxes an existing assertion.
+
+
+class _RecordingGateway(LLMGateway):
+    """Captures the full keyword set of every gateway call, so a retry can be
+    compared field-by-field against the attempt it repeats. Records and
+    delegates -- it changes no behavior, and the production Gateway is used
+    unmodified underneath."""
+
+    def __init__(self, provider: _SequencedProvider) -> None:
+        super().__init__(provider)
+        self.calls: list[dict] = []
+
+    def generate(self, **kwargs: object) -> GenerationResult:
+        self.calls.append(dict(kwargs))
+        return super().generate(**kwargs)  # type: ignore[arg-type]
+
+
+def _run_lenses_recording(
+    gateway: _RecordingGateway, *, timeout_seconds: float | None = None
+) -> tuple[list[dict], list[str]]:
+    return run_judge_gates(
+        gateway,
+        _budget(),
+        _PRICED_MODEL,
+        "do the thing",
+        "print('hi')",
+        run_id=7,
+        task_id="task-7",
+        conn=None,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def test_i_retry_repeats_every_call_argument_except_the_agent_label() -> None:
+    """Invariant I. The 9E suite compared only (system, max_tokens) at the
+    provider boundary. This compares the whole gateway keyword set, so a future
+    edit that varied the model, the user prompt, the timeout or the run/task
+    attribution on the second attempt would fail here."""
+    gateway = _RecordingGateway(_SequencedProvider([("half a json {", _TRUNCATED)]))
+    _run_lenses_recording(gateway, timeout_seconds=31.5)
+
+    initial, retry = gateway.calls[0], gateway.calls[1]
+
+    assert initial["agent_name"] == "judge:correctness"
+    assert retry["agent_name"] == "judge:correctness:retry"
+
+    differing = {k for k in initial if initial[k] != retry[k]}
+    assert differing == {"agent_name"}, f"retry must differ only by its label, got {differing}"
+
+    # Spelled out as well, so a failure names the field rather than a set diff.
+    assert retry["model"] == initial["model"] == _PRICED_MODEL
+    assert retry["messages"] == initial["messages"]
+    assert retry["system"] == initial["system"]
+    assert retry["max_tokens"] == initial["max_tokens"] == 1600
+    assert retry["timeout_seconds"] == initial["timeout_seconds"] == 31.5
+    assert (retry["run_id"], retry["task_id"]) == (initial["run_id"], initial["task_id"])
+    assert retry["budget"] is initial["budget"]
+
+
+def test_l_a_retry_is_never_itself_retried() -> None:
+    """Invariant L. Every lens truncates, and so does every retry: the call
+    labels must be exactly one initial and one retry per lens, in order, with
+    no ':retry:retry' anywhere."""
+    gateway = _RecordingGateway(_SequencedProvider([("{", _TRUNCATED)] * 6))
+    critics, schema_errors = _run_lenses_recording(gateway)
+
+    assert [c["agent_name"] for c in gateway.calls] == [
+        "judge:correctness",
+        "judge:correctness:retry",
+        "judge:security",
+        "judge:security:retry",
+        "judge:code-quality",
+        "judge:code-quality:retry",
+    ]
+    assert not any(str(c["agent_name"]).endswith(":retry:retry") for c in gateway.calls)
+    assert critics == []
+    assert len(schema_errors) == 3
+
+
+def test_k_a_parsed_blocking_defect_is_kept_even_with_a_clean_response_queued() -> None:
+    """Invariant K. The first lens returns a parseable HIGH *and* reports
+    max_tokens, with a clean critic sitting next in the queue. If the retry
+    ever fired on a parsed response, that clean critic would replace the HIGH.
+    Three calls proves it never fired; the surviving HIGH proves nothing was
+    discarded."""
+    provider = _SequencedProvider(
+        [(_blocking_critic_json(), _TRUNCATED), (_ok_critic_json(), _COMPLETE)]
+    )
+    critics, schema_errors = _run_lenses(provider)
+
+    assert len(provider.calls) == 3, "a parsed critic must not be retried, truncated or not"
+    assert schema_errors == []
+    assert critics[0]["defects"][0]["severity"] == "HIGH"
+    assert critics[0]["defects"][0]["lens"] == "correctness"
+
+
+def _verify_with_sequence(
+    queued: list[tuple[str, str | None]],
+    monkeypatch,
+    tmp_path: Path,
+    raises: Exception | None = None,
+) -> tuple[str, dict, list[VerificationResult]]:
+    monkeypatch.setattr(
+        pipeline, "run_automated_gates", lambda workspace: [VerificationResult("ruff", True, "ok")]
+    )
+    return pipeline.run_verification(
+        tmp_path,
+        LLMGateway(_SequencedProvider(queued, raises=raises)),
+        _budget(),
+        _PRICED_MODEL,
+        "task",
+        run_id=1,
+        task_id="task-1",
+        conn=None,
+    )
+
+
+def test_j_a_rescued_critic_changes_what_gate_sees_never_how_gate_decides(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Invariant J. End to end through run_verification: a rescued critic is
+    ordinary data reaching verdict.gate(), which applies its unchanged rule to
+    it. A rescued HIGH still blocks; a rescued clean critic still passes."""
+    blocking_status, blocking_merged, _ = _verify_with_sequence(
+        [("half a json {", _TRUNCATED), (_blocking_critic_json(), _COMPLETE)], monkeypatch, tmp_path
+    )
+    assert blocking_status == "UNVERIFIED"
+    assert "schema_errors" not in blocking_merged, "a rescued lens leaves no schema error"
+    assert blocking_merged["defects"][0]["severity"] == "HIGH"
+
+    clean_status, clean_merged, _ = _verify_with_sequence(
+        [("half a json {", _TRUNCATED), (_ok_critic_json(), _COMPLETE)], monkeypatch, tmp_path
+    )
+    assert clean_status == "OK"
+    assert clean_merged["defects"] == []
+
+    # gate() is a pure function of its three arguments and is reached the same
+    # way with or without a rescue.
+    assert verdict.gate(blocking_merged, True, []) == "UNVERIFIED"
+    assert verdict.gate(clean_merged, True, []) == "OK"
+
+
+def test_h_a_retry_provider_error_never_becomes_a_case_level_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Invariant H, completed. The 9E suite proved run_judge_gates survives a
+    raising retry; this proves the exception never escapes run_verification
+    either, so eval/runner.py records a normal UNVERIFIED case rather than an
+    error row excluded from the accuracy denominator."""
+    status, merged, _ = _verify_with_sequence(
+        [("half a json {", _TRUNCATED)], monkeypatch, tmp_path, raises=RuntimeError("boom")
+    )
+
+    assert status == "UNVERIFIED"
+    assert merged["schema_errors"], "the first attempt's schema errors must survive"
+    assert all(e.startswith("judge:correctness:") for e in merged["schema_errors"])
