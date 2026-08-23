@@ -744,3 +744,14 @@ def test_usage_is_logged_per_attempt(tmp_path: Path) -> None:
     assert len(attempts) == 2
     assert all("input_tokens" in event.payload for event in attempts)
     assert all("thinking_tokens" in event.payload for event in attempts)
+
+
+def test_diagnosis_context_log_payload_is_flat(tmp_path: Path) -> None:
+    """Same nesting defect as the repro events -- see that test for why."""
+    log = SessionLog()
+    _diagnose(tmp_path, [rootcause_block(**valid_payload())], log=log)
+
+    payload = log.of_kind("diagnosis_context")[0].payload
+
+    assert "payload" not in payload
+    assert payload["inspected_files"] == ["cart.py"]

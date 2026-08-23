@@ -38,6 +38,45 @@ _FRAME_RE = re.compile(
     re.MULTILINE,
 )
 
+# pytest's own failure-location lines, which is what `pytest -q` prints instead
+# of CPython frames. Three forms occur, all anchored to the start of a line:
+#
+#     tests/test_cart.py:6:            (entry point, no function named)
+#     cart.py:33: in cart_total        (location and function)
+#     cart.py:24: ValueError           (deepest location, exception type)
+#
+# Supporting these is what lets an ordinary `pytest -q ...::test_x` reproduction
+# produce usable evidence without the caller knowing to add `--tb=native`.
+#
+# The pattern is deliberately narrow, because "file:line:" is a shape that
+# ordinary log output also has. Four constraints keep noise out:
+#   * anchored to the whole line, so a location mentioned mid-sentence is not a
+#     frame and a trailing sentence disqualifies the match;
+#   * the path must end in a Python source suffix;
+#   * the line number must be digits;
+#   * what follows the second colon must be nothing, `in <name>`, or a single
+#     exception-shaped token -- never free prose.
+# Whatever survives still faces the workspace guard, which is what rejects
+# site-packages, traversal, credential names and files that do not exist.
+_PYTEST_LOCATION_RE = re.compile(
+    # The path class excludes newlines as well as colons. Without that, `^` under
+    # MULTILINE still anchors correctly but the lazy run can backtrack ACROSS a
+    # line break, so a match starting on one line swallows the lines above it --
+    # which turns preceding prose into part of a "path".
+    r"^(?P<file>(?:[A-Za-z]:)?[^\s:][^:\r\n]*?\.pyi?)"
+    r":(?P<line>\d+):"
+    r"(?:[ \t]+in[ \t]+(?P<function>[A-Za-z_][\w.<>]*)"
+    r"|[ \t]*(?P<exception>[A-Za-z_][\w.]*)?)"
+    r"[ \t]*$",
+    re.MULTILINE,
+)
+
+# Used when pytest names a location but not the function it sits in. Chosen to
+# start with '<' so it sorts with CPython's own synthetic names (`<module>`,
+# `<lambda>`) and is skipped by the D2 search-term extractor, which must not go
+# hunting for a function name nobody reported.
+UNKNOWN_FUNCTION = "<unknown>"
+
 # The `ExceptionType: message` line that closes a traceback, and pytest's
 # `E   ValueError: ...` echo of it.
 #
@@ -144,12 +183,24 @@ def to_workspace_file(raw: str, workspace: Workspace) -> str | None:
 
 
 def extract_frames(text: str, workspace: Workspace, limits: Limits) -> list[Frame]:
-    """In-workspace traceback frames, deepest last, bounded.
+    """In-workspace frames from either traceback format, deepest last, bounded.
+
+    Native CPython frames are preferred when present: they name the function
+    every frame sits in, which pytest's location lines often cannot. The pytest
+    format is the fallback, not a supplement, so a run that emits both cannot
+    report the same frame twice under two names.
 
     When the bound bites, the *deepest* frames are kept: the frame nearest the
     throw is the one worth reading, and the outer frames are usually test
     harness scaffolding.
     """
+    frames = _native_frames(text, workspace) or _pytest_frames(text, workspace)
+    if limits.max_evidence_frames >= 0:
+        frames = frames[-limits.max_evidence_frames :] if limits.max_evidence_frames else []
+    return frames
+
+
+def _native_frames(text: str, workspace: Workspace) -> list[Frame]:
     frames: list[Frame] = []
     for match in _FRAME_RE.finditer(text):
         relative = to_workspace_file(match.group("file"), workspace)
@@ -162,8 +213,31 @@ def extract_frames(text: str, workspace: Workspace, limits: Limits) -> list[Fram
                 function=match.group("function").strip(),
             )
         )
-    if limits.max_evidence_frames >= 0:
-        frames = frames[-limits.max_evidence_frames :] if limits.max_evidence_frames else []
+    return frames
+
+
+def _pytest_frames(text: str, workspace: Workspace) -> list[Frame]:
+    """Locations from ordinary `pytest -q` output, in the order printed.
+
+    pytest prints outermost first and the raising location last, the same
+    ordering CPython uses, so ``suspect`` keeps its meaning without special
+    handling here.
+    """
+    frames: list[Frame] = []
+    for match in _PYTEST_LOCATION_RE.finditer(text):
+        relative = to_workspace_file(match.group("file"), workspace)
+        if relative is None:
+            continue
+        frames.append(
+            Frame(
+                file=relative,
+                line=int(match.group("line")),
+                # pytest names the function only on `in <name>` lines. The
+                # deepest line carries the exception type instead, and inventing
+                # a function name for it would be a claim nothing supports.
+                function=(match.group("function") or UNKNOWN_FUNCTION).strip(),
+            )
+        )
     return frames
 
 
@@ -174,11 +248,18 @@ def extract_exception(text: str, limits: Limits) -> tuple[str | None, str | None
     is the failure that stopped the command.
     """
     matches = list(_EXCEPTION_RE.finditer(text))
-    if not matches:
-        return None, None
-    last = matches[-1]
-    message = last.group("message").strip()[: limits.max_evidence_text_chars]
-    return last.group("type"), message
+    if matches:
+        last = matches[-1]
+        message = last.group("message").strip()[: limits.max_evidence_text_chars]
+        return last.group("type"), message
+
+    # Fallback for pytest output that names the exception only on its location
+    # line (`cart.py:24: ValueError`). That form carries a type and no message,
+    # so the message stays None rather than being invented.
+    located = [m for m in _PYTEST_LOCATION_RE.finditer(text) if m.group("exception")]
+    if located:
+        return located[-1].group("exception"), None
+    return None, None
 
 
 def build_evidence(

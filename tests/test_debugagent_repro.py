@@ -323,3 +323,32 @@ def test_reproduce_needs_no_gateway_argument() -> None:
 def test_frozen_repro_is_exported() -> None:
     assert FrozenRepro is not None
     assert subprocess is not None  # import kept meaningful for the monkeypatch test
+
+
+def test_repro_log_payloads_are_flat_not_nested(tmp_path: Path) -> None:
+    """SessionLog.emit takes **payload; passing payload={...} nests it.
+
+    Regression test for a real defect: every repro event was landing as
+    {"payload": {...}}, so a consumer reading event.payload["argv"] saw a
+    KeyError. Nothing asserted on log contents, so nothing caught it.
+    """
+    from engine.codeagent.log import SessionLog
+
+    log = SessionLog()
+    ws = _ws(tmp_path, {"bug.py": FAILING})
+    reproduce(
+        repro=freeze_repro(["python", "bug.py"]),
+        workspace=ws,
+        policy=DEFAULT_POLICY,
+        limits=Limits(),
+        log=log,
+    )
+
+    attempt = log.of_kind("repro_attempt")[0].payload
+    result = log.of_kind("repro_result")[0].payload
+
+    assert "payload" not in attempt
+    assert attempt["argv"] == ["python", "bug.py"]
+    assert "payload" not in result
+    assert result["status"] == "REPRODUCED"
+    assert result["reproduced"] is True

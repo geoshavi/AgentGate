@@ -141,12 +141,32 @@ _REASONING_WORDS = ("reasoning", "thinking", "thought", "chain_of_thought", "scr
 
 
 def test_no_state_dataclass_has_a_reasoning_field() -> None:
-    """Structural guarantee: there is nowhere to put chain-of-thought."""
+    """Structural guarantee: there is nowhere to put chain-of-thought.
+
+    The rule bans a place to put reasoning *text*. An ``int`` field ending in
+    ``_tokens`` is a count and cannot hold prose, which is why
+    ``GenerationResult.thinking_tokens`` has carried that exact name since
+    Phase 9C.2 with a docstring stating "a count, not content: the reasoning
+    text itself is deliberately never carried here". ``Usage.thinking_tokens``
+    is the same measurement recorded one layer down, so it is exempted on the
+    same grounds -- and only when it really is an int, so a later `str` field
+    sneaking in under the name still fails.
+    """
     for cls in (TaskState, Usage, ToolCall, ToolResult, CommandRun, TestRun):
         for f in fields(cls):
+            if f.name.endswith("_tokens") and f.type in ("int", int):
+                continue
             assert not any(word in f.name.lower() for word in _REASONING_WORDS), (
                 f"{cls.__name__}.{f.name}"
             )
+
+
+def test_token_count_fields_are_integers_not_text() -> None:
+    """The exemption above is only safe while these stay counts."""
+    usage = Usage()
+
+    for name in ("input_tokens", "output_tokens", "thinking_tokens", "tokens_spent"):
+        assert isinstance(getattr(usage, name), int), name
 
 
 def test_serialized_state_exposes_only_observable_execution_data() -> None:

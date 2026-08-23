@@ -10,6 +10,8 @@ assertions exact rather than approximate.
 import json
 from pathlib import Path
 
+import pytest
+
 from engine.codeagent.limits import Limits
 from engine.codeagent.workspace import Workspace
 from engine.debugagent.evidence import Frame, build_evidence, render_evidence
@@ -326,3 +328,165 @@ def test_render_evidence_is_deterministic(tmp_path: Path) -> None:
 
     assert render_evidence(ev) == render_evidence(ev)
     assert "cart.py:23" in render_evidence(ev)
+
+
+# -- ordinary pytest failure output -----------------------------------------
+#
+# `pytest -q` does not print CPython's `File "...", line N, in fn` frames. It
+# prints its own location lines, and a repro command that a person would
+# actually type must produce usable evidence without special flags.
+
+PYTEST_OUTPUT = (
+    "F                                                                        [100%]\n"
+    "=================================== FAILURES ===================================\n"
+    "________________________ test_empty_cart_is_shipping_only ________________________\n"
+    "\n"
+    "    def test_empty_cart_is_shipping_only() -> None:\n"
+    ">       assert cart_total([]) == SHIPPING_FLAT\n"
+    "\n"
+    "tests/test_cart.py:6: \n"
+    "_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n"
+    "cart.py:33: in cart_total\n"
+    "    return round(subtotal + SHIPPING_FLAT - _discount(items), 2)\n"
+    "cart.py:24: ValueError\n"
+    "=========================== short test summary info ============================\n"
+    "FAILED tests/test_cart.py::test_empty_cart_is_shipping_only - ValueError: min...\n"
+)
+
+
+def _pytest_ws(tmp_path: Path) -> Workspace:
+    return _ws(
+        tmp_path,
+        {
+            "cart.py": "x = 1\n" * 40,
+            "tests/test_cart.py": "y = 2\n" * 20,
+        },
+    )
+
+
+def test_ordinary_pytest_output_yields_in_workspace_frames(tmp_path: Path) -> None:
+    ws = _pytest_ws(tmp_path)
+    ev = _evidence(ws, stdout=PYTEST_OUTPUT)
+
+    assert ev.frames != []
+    assert ev.referenced_files != []
+    assert "cart.py" in ev.referenced_files
+
+
+def test_pytest_location_with_a_function_is_parsed(tmp_path: Path) -> None:
+    ws = _pytest_ws(tmp_path)
+    ev = _evidence(ws, stdout=PYTEST_OUTPUT)
+
+    assert Frame(file="cart.py", line=33, function="cart_total") in ev.frames
+
+
+def test_pytest_suspect_is_the_deepest_location(tmp_path: Path) -> None:
+    """cart.py:24 is where it raised; that is the line worth reading first."""
+    ws = _pytest_ws(tmp_path)
+    ev = _evidence(ws, stdout=PYTEST_OUTPUT)
+
+    assert ev.suspect is not None
+    assert ev.suspect.file == "cart.py"
+    assert ev.suspect.line == 24
+
+
+def test_pytest_frames_keep_traceback_order(tmp_path: Path) -> None:
+    ws = _pytest_ws(tmp_path)
+    lines = [(f.file, f.line) for f in _evidence(ws, stdout=PYTEST_OUTPUT).frames]
+
+    assert lines == [("tests/test_cart.py", 6), ("cart.py", 33), ("cart.py", 24)]
+
+
+def test_pytest_exception_is_still_parsed(tmp_path: Path) -> None:
+    ws = _pytest_ws(tmp_path)
+    ev = _evidence(ws, stdout=PYTEST_OUTPUT)
+
+    assert ev.exception_type == "ValueError"
+
+
+def test_windows_separators_in_pytest_output_are_handled(tmp_path: Path) -> None:
+    ws = _pytest_ws(tmp_path)
+    # chr(92) is a literal backslash -- pytest prints Windows separators, and
+    # writing it inline would be read as an escape by Python.
+    text = "tests" + chr(92) + "test_cart.py:6: \ncart.py:24: ValueError\n"
+    ev = _evidence(ws, stdout=text)
+
+    assert ("tests/test_cart.py", 6) in [(f.file, f.line) for f in ev.frames]
+
+
+def test_the_failed_summary_line_is_not_a_frame(tmp_path: Path) -> None:
+    """`FAILED path::test - msg` names a file but is not a location."""
+    ws = _pytest_ws(tmp_path)
+    text = "FAILED tests/test_cart.py::test_empty_cart_is_shipping_only - ValueError: x\n"
+
+    assert _evidence(ws, stdout=text).frames == []
+
+
+# -- false positives --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "cart.py:24: something went badly wrong here",  # prose after the colon
+        "cart.py: ValueError",  # no line number
+        "cart.py:notanumber: ValueError",  # line is not digits
+        "12:30:45 cart.py started",  # a timestamp
+        "note: see cart.py:24: for details",  # not at line start
+        "config.yaml:10: ValueError",  # not a python source file
+    ],
+)
+def test_colon_formatted_noise_is_not_a_frame(tmp_path: Path, line: str) -> None:
+    ws = _pytest_ws(tmp_path)
+
+    assert _evidence(ws, stdout=line + "\n").frames == []
+
+
+def test_pytest_location_outside_the_workspace_is_rejected(tmp_path: Path) -> None:
+    ws = _pytest_ws(tmp_path)
+    text = (
+        "../../../etc/secrets.py:3: in leak\n"
+        "/usr/lib/python3.14/random.py:100: in choice\n"
+        "cart.py:24: ValueError\n"
+    )
+    ev = _evidence(ws, stdout=text)
+
+    assert [f.file for f in ev.frames] == ["cart.py"]
+
+
+def test_pytest_location_naming_a_secret_file_is_rejected(tmp_path: Path) -> None:
+    ws = _ws(tmp_path, {"cart.py": "x = 1\n" * 40, ".env": "ANTHROPIC_API_KEY=sk-live\n"})
+    text = ".env:1: in load\ncart.py:24: ValueError\n"
+    ev = _evidence(ws, stdout=text)
+
+    assert [f.file for f in ev.frames] == ["cart.py"]
+    assert ".env" not in ev.referenced_files
+
+
+def test_pytest_location_for_a_missing_file_is_rejected(tmp_path: Path) -> None:
+    ws = _pytest_ws(tmp_path)
+
+    assert _evidence(ws, stdout="ghost.py:4: in vanished\n").frames == []
+
+
+# -- the native parser is unchanged -----------------------------------------
+
+
+def test_native_traceback_extraction_is_unchanged(tmp_path: Path) -> None:
+    ws = _ws(tmp_path, {"cart.py": "x = 1\n" * 40})
+    ev = _evidence(ws, stderr=_traceback(ws.root))
+
+    assert ev.frames == [
+        Frame(file="cart.py", line=11, function="cart_total"),
+        Frame(file="cart.py", line=23, function="_discount"),
+    ]
+    assert ev.suspect == Frame(file="cart.py", line=23, function="_discount")
+
+
+def test_native_frames_win_when_both_formats_are_present(tmp_path: Path) -> None:
+    """Native frames name functions; the pytest form often cannot."""
+    ws = _ws(tmp_path, {"cart.py": "x = 1\n" * 40})
+    ev = _evidence(ws, stderr=_traceback(ws.root), stdout="cart.py:99: ValueError\n")
+
+    assert [f.line for f in ev.frames] == [11, 23]
+    assert all(f.function != "<unknown>" for f in ev.frames)

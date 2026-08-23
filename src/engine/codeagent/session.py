@@ -81,8 +81,19 @@ class CodingSession:
         clock: Callable[[], float] = time.monotonic,
         planning: PlanOutcome | None = None,
         repair_feedback: str | None = None,
+        system_prompt: str | None = None,
+        agent_name: str = AGENT_NAME,
     ) -> None:
         self._task_text = task_text
+        # Two injection points, both defaulting to the Coding Agent's own
+        # behaviour, so every existing call site is unchanged. They exist for
+        # the Debug Agent's fix session (D3), which is this same loop with a
+        # different brief and a different metrics label -- not a different loop.
+        # Everything else it needs is already injectable: the tool registry
+        # decides the advertised catalogue, and the opening message is built
+        # from task_text.
+        self._system_prompt = system_prompt
+        self._agent_name = agent_name
         self._workspace = workspace
         self._gateway = gateway
         self._budget = budget
@@ -143,7 +154,11 @@ class CodingSession:
         )
         self._set_phase(Phase.EXPLORING)
 
-        system = protocol.build_system_prompt(self._tools)
+        system = (
+            protocol.build_system_prompt(self._tools)
+            if self._system_prompt is None
+            else self._system_prompt
+        )
         opening = protocol.render_task(self._task_text)
         if self._planning is not None:
             # The plan is context, not authority: it is appended to the opening
@@ -169,6 +184,9 @@ class CodingSession:
                 )
 
             turn = state.usage.turns_used + 1
+            # Counted before the call, so a request that raises is still a
+            # request that was made. See state.Usage for why not on return.
+            state.usage.model_calls += 1
             try:
                 result = self._gateway.generate(
                     budget=self._budget,
@@ -176,7 +194,7 @@ class CodingSession:
                     model=self._model,
                     system=system,
                     max_tokens=self._limits.turn_max_tokens,
-                    agent_name=AGENT_NAME,
+                    agent_name=self._agent_name,
                     timeout_seconds=self._limits.command_timeout_seconds,
                     conn=self._conn,
                     run_id=self._run_id,
@@ -194,6 +212,9 @@ class CodingSession:
                 )
 
             state.usage.turns_used = turn
+            state.usage.input_tokens += result.input_tokens
+            state.usage.output_tokens += result.output_tokens
+            state.usage.thinking_tokens += result.thinking_tokens
             self._sync_usage()
             self._log.emit(
                 "model_call",

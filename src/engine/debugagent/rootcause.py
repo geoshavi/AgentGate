@@ -530,7 +530,7 @@ def diagnose(
     context = build_context(
         evidence=evidence, workspace=workspace, policy=policy, limits=limits
     )
-    sink.emit("diagnosis_context", payload={"inspected_files": context.inspected_files})
+    sink.emit("diagnosis_context", inspected_files=context.inspected_files)
 
     system = build_diagnosis_prompt(limits)
     messages = [Message(role="user", content=render_request(task_text, repro, context))]

@@ -143,7 +143,7 @@ def reproduce(
     """
     sink = log if log is not None else SessionLog()
     argv = repro.as_list()
-    sink.emit("repro_attempt", payload={"argv": argv})
+    sink.emit("repro_attempt", argv=argv)
 
     ctx = ToolContext(workspace=workspace, policy=policy, limits=limits)
 
@@ -217,13 +217,11 @@ def _log_result(sink: SessionLog, outcome: ReproOutcome) -> None:
     terminal = outcome.terminal_status
     sink.emit(
         "repro_result",
-        payload={
-            "status": outcome.status.value,
-            "reproduced": outcome.reproduced,
-            "terminal_status": None if terminal is None else terminal.value,
-            "reason": outcome.reason,
-            "exit_code": None if outcome.evidence is None else outcome.evidence.exit_code,
-        },
+        status=outcome.status.value,
+        reproduced=outcome.reproduced,
+        terminal_status=None if terminal is None else terminal.value,
+        reason=outcome.reason,
+        exit_code=None if outcome.evidence is None else outcome.evidence.exit_code,
     )
 
 

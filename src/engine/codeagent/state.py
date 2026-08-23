@@ -142,6 +142,22 @@ class Usage:
     tool_calls: int = 0
     tokens_spent: int = 0
     spend: Decimal = Decimal(0)
+    # Per-call model accounting, distinct from ``tokens_spent``/``spend``, which
+    # come from the BudgetController and are cumulative over everything that
+    # shares the budget -- including a diagnosis phase this session knows
+    # nothing about. These four describe this session alone.
+    #
+    # ``model_calls`` counts gateway.generate ATTEMPTS: it is incremented before
+    # the call, so a request that raised is still counted, because it was still
+    # made. The token fields count only what a GenerationResult returned, and
+    # are never estimated for a failed call -- so one attempt with zero tokens
+    # is a request that never came back, which is exactly what a reader needs
+    # to be able to see. ``thinking_tokens`` is a count; reasoning text is never
+    # carried, per GenerationResult's own rule.
+    model_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    thinking_tokens: int = 0
 
 
 @dataclass
