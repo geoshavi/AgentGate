@@ -22,7 +22,8 @@ class GitDiffTool:
             argv = ["git", "diff"]
             if bool_arg(args, "stat", False):
                 argv.append("--stat")
-            result, _record = execute(argv, ctx)
+            result, record = execute(argv, ctx)
+            ctx.command_log.append(record)
             return result
 
         return guarded(_run)
@@ -34,7 +35,8 @@ class GitStatusTool:
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         def _run() -> ToolResult:
-            result, _record = execute(["git", "status", "--porcelain"], ctx)
+            result, record = execute(["git", "status", "--porcelain"], ctx)
+            ctx.command_log.append(record)
             return result
 
         return guarded(_run)

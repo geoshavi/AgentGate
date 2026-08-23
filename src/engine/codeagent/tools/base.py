@@ -13,12 +13,12 @@ caller who forgets to check.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from engine.codeagent.limits import Limits
 from engine.codeagent.policy import CommandDenied, CommandPolicy
-from engine.codeagent.state import ToolResult
+from engine.codeagent.state import CommandRun, ToolResult
 from engine.codeagent.workspace import Workspace, WorkspaceError
 
 
@@ -36,6 +36,14 @@ class ToolContext:
     workspace: Workspace
     policy: CommandPolicy
     limits: Limits
+    # Commands that actually executed, appended by tools/shell.py and drained
+    # by the session into TaskState. A sink rather than a second return value
+    # because ``Tool.run`` returns exactly one ToolResult -- the loop needs one
+    # shape from every tool -- while a command carries facts no ToolResult has
+    # room for (its argv, whether it timed out, how long it took). A refused
+    # command never reaches here: the policy check raises before the record
+    # exists, so this list means "ran", not "was asked for".
+    command_log: list[CommandRun] = field(default_factory=list)
 
 
 class Tool(Protocol):

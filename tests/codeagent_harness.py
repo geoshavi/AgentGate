@@ -87,3 +87,80 @@ def final_turn(summary: str = "done", files: list[str] | None = None) -> str:
 
 def plan_block(**payload: object) -> str:
     return f"```plan\n{json.dumps(payload)}\n```"
+
+
+def critic(defects: list[dict] | None = None) -> str:
+    """A judge lens response. ``verdict`` is derived so it is always
+    self-consistent with the severities, which the real schema enforces."""
+    found = defects or []
+    blocking = any(d.get("severity") in ("CRITICAL", "HIGH") for d in found)
+    return json.dumps({"defects": found, "verdict": "FAIL" if blocking else "OK"})
+
+
+CLEAN_CRITIC = critic()
+
+
+class ScenarioProvider:
+    """One offline provider for a whole end-to-end run.
+
+    Routes by system prompt into three scripted streams -- planner, agent
+    turns, judge lenses -- so a single fake can drive plan -> session ->
+    verification -> repair without a network or an API key. Judge responses
+    are per verification round: all three lenses of a round get the same
+    answer, and the round advances every len(LENSES) calls.
+    """
+
+    name = "scenario"
+
+    def __init__(
+        self,
+        *,
+        agent_turns: list[str],
+        plan_turns: list[str] | None = None,
+        judge_rounds: list[str] | None = None,
+        lens_prompts: tuple[str, ...] = (),
+    ) -> None:
+        self._agent_turns = agent_turns
+        self._plan_turns = plan_turns or []
+        self._judge_rounds = judge_rounds or [CLEAN_CRITIC]
+        self._lens_prompts = set(lens_prompts)
+        self.plan_calls = 0
+        self.agent_calls = 0
+        self.judge_calls = 0
+        self.seen_systems: list[str | None] = []
+        self.seen_messages: list[list[Message]] = []
+
+    def generate(
+        self,
+        messages: list[Message],
+        model: str,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+        timeout_seconds: float | None = None,
+    ) -> GenerationResult:
+        self.seen_systems.append(system)
+        self.seen_messages.append(list(messages))
+
+        if system in self._lens_prompts:
+            lenses = max(1, len(self._lens_prompts))
+            index = min(self.judge_calls // lenses, len(self._judge_rounds) - 1)
+            self.judge_calls += 1
+            text = self._judge_rounds[index]
+        elif system is not None and "You are planning a coding task" in system:
+            index = min(self.plan_calls, len(self._plan_turns) - 1) if self._plan_turns else -1
+            self.plan_calls += 1
+            text = self._plan_turns[index] if self._plan_turns else "no plan block"
+        else:
+            index = min(self.agent_calls, len(self._agent_turns) - 1)
+            self.agent_calls += 1
+            text = self._agent_turns[index]
+
+        return GenerationResult(
+            text=text,
+            model=model,
+            provider=self.name,
+            input_tokens=10,
+            output_tokens=20,
+            stop_reason="end_turn",
+        )

@@ -33,9 +33,9 @@ and is raised, per `git-safety`.
 ## 1. MVP user experience
 
 ```
-$ engine code "parse_due_date('') raises IndexError. It should raise
-               ValueError('due date must not be empty'). Fix it and add a
-               regression test." --repo ./examples/todo_cli
+$ engine code "parse_due_date('') fails with an unhelpful error. It should
+               raise ValueError('due date must not be empty'). Fix it and add
+               a regression test." --repo ./examples/todo_cli
 ```
 
 The agent then, on one screen:
@@ -699,7 +699,7 @@ Fixture repo `examples/todo_cli/` — new, small, self-contained:
 # todo.py
 def parse_due_date(raw: str) -> tuple[int, int, int]:
     parts = raw.split("-")
-    return int(parts[0]), int(parts[1]), int(parts[2])   # IndexError on ""
+    return int(parts[0]), int(parts[1]), int(parts[2])   # unhelpful ValueError on ""
 ```
 
 ```python
@@ -710,8 +710,12 @@ def test_parses_iso_date():
 
 **Task given to the agent:**
 
-> `parse_due_date('')` raises `IndexError`. It should raise
+> `parse_due_date('')` fails with an unhelpful error. It should raise
 > `ValueError("due date must not be empty")` instead. Fix it and add a regression test.
+
+`""` splits to `[""]`, so `int(parts[0])` raises
+`ValueError: invalid literal for int() with base 10: ''` before any index can go
+out of range — the defect is the *unhelpful message*, not an `IndexError`.
 
 **Expected trajectory** — exercises all 11 capabilities from §2:
 

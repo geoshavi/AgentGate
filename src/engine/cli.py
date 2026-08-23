@@ -1,6 +1,8 @@
 import argparse
 import io
 import sys
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 
 from engine.config import DEFAULT_MODELS, load_config
@@ -27,6 +29,42 @@ def main() -> None:
         "--workspace", default=None, help="Directory to write generated code into"
     )
     run_parser.add_argument("--provider", default="anthropic", help="Provider to use")
+
+    code_parser = subparsers.add_parser(
+        "code",
+        help="Run a coding task inside a workspace, verified by AgentGate",
+        description=(
+            "Plans, edits files with real tools, runs tests, then puts the result "
+            "through AgentGate verification. The workspace is edited IN PLACE. Exit "
+            "code 0 means AgentGate verified the work, 1 means it was reviewed and "
+            "blocked, 2 means the agent or runtime failed."
+        ),
+    )
+    code_parser.add_argument("task", help="Natural-language description of the task")
+    code_parser.add_argument(
+        "--workspace", required=True, help="Directory the agent may read and edit (in place)"
+    )
+    code_parser.add_argument("--provider", default="anthropic", help="Provider to use")
+    code_parser.add_argument(
+        "--model", default=None, help="Model for the agent (default: this provider's coding model)"
+    )
+    code_parser.add_argument(
+        "--judge-model", default=None, help="Model for the judge lenses (default: the judge model)"
+    )
+    code_parser.add_argument(
+        "--budget", default=None, metavar="USD", help="Max spend for the whole run, e.g. 0.25"
+    )
+    code_parser.add_argument("--max-tokens", type=int, default=None, help="Token ceiling")
+    code_parser.add_argument(
+        "--timeout", type=float, default=None, metavar="SECONDS", help="Wall-clock deadline"
+    )
+    code_parser.add_argument("--max-turns", type=int, default=None, help="Model turns allowed")
+    code_parser.add_argument(
+        "--max-repairs", type=int, default=None, help="Verification-driven repair rounds"
+    )
+    code_parser.add_argument(
+        "--json", dest="json_path", default=None, metavar="PATH", help="Also write the report JSON here"
+    )
 
     serve_parser = subparsers.add_parser(
         "serve", help="Run the code-review HTTP API (for n8n or other automation)"
@@ -74,6 +112,55 @@ def main() -> None:
         print(report)
 
         sys.exit(0 if result.passed else 1)
+    elif args.command == "code":
+        from engine.codeagent.app import EXIT_ERROR, WorkspaceRejected, run_coding_task
+        from engine.codeagent.limits import DEFAULT_LIMITS
+        from engine.codeagent.report import render_report
+
+        config = load_config()
+        models = DEFAULT_MODELS[args.provider]
+        overrides = {
+            "session_timeout_seconds": args.timeout,
+            "max_turns": args.max_turns,
+            "max_repair_rounds": args.max_repairs,
+        }
+        limits = replace(
+            DEFAULT_LIMITS, **{k: v for k, v in overrides.items() if v is not None}
+        )
+
+        try:
+            gateway = LLMGateway.from_config(args.provider, config)
+            code_result = run_coding_task(
+                task_text=args.task,
+                workspace_path=Path(args.workspace),
+                gateway=gateway,
+                model=args.model or models["coding"],
+                judge_model=args.judge_model or models["judge"],
+                provider_name=args.provider,
+                limits=limits,
+                # str -> Decimal, never float: see runtime/budget.py.
+                planned_budget=Decimal(args.budget) if args.budget else config.planned_budget,
+                max_tokens=args.max_tokens or config.max_tokens,
+                artifacts_root=config.db_path.parent / "codeagent",
+                db_path=config.db_path,
+            )
+        except WorkspaceRejected as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(EXIT_ERROR)
+        except Exception as exc:  # noqa: BLE001 - a CLI reports failures, it does not traceback
+            print(f"ERROR: {type(exc).__name__}: {exc}")
+            sys.exit(EXIT_ERROR)
+
+        print(render_report(code_result.report))
+        if code_result.report_path is not None:
+            print(f"report    {code_result.report_path}")
+        if code_result.log_path is not None:
+            print(f"log       {code_result.log_path}")
+        if args.json_path:
+            Path(args.json_path).write_text(code_result.report.to_json(), encoding="utf-8")
+            print(f"json      {args.json_path}")
+
+        sys.exit(code_result.exit_code)
     elif args.command == "serve":
         from engine.api import serve
 

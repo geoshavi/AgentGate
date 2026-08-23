@@ -31,7 +31,14 @@ from engine.codeagent.limits import DEFAULT_LIMITS, Limits
 from engine.codeagent.log import SessionLog
 from engine.codeagent.plan import PlanOutcome, render_plan_context
 from engine.codeagent.policy import DEFAULT_POLICY, CommandPolicy
-from engine.codeagent.state import Phase, SessionStatus, TaskState, ToolCall, ToolResult
+from engine.codeagent.state import (
+    Phase,
+    SessionStatus,
+    TaskState,
+    TestRun,
+    ToolCall,
+    ToolResult,
+)
 from engine.codeagent.tools.base import Tool, ToolContext
 from engine.codeagent.tools.registry import TOOL_REGISTRY
 from engine.codeagent.workspace import Workspace
@@ -308,6 +315,7 @@ class CodingSession:
             duration_ms = int((self._clock() - started) * 1000)
 
         self._state.record_tool(call, result, duration_ms=duration_ms)
+        self._drain_commands(call)
         self._log.emit(
             "tool_call",
             turn,
@@ -321,6 +329,29 @@ class CodingSession:
             error=result.error,
         )
         return result
+
+    def _drain_commands(self, call: ToolCall) -> None:
+        """Move commands that actually executed into the report's record.
+
+        A test run gets a ``TestRun`` entry as well: "the suite was run and
+        what it said" is the question a reader of the report asks first, and
+        answering it from an argv list in ``commands_run`` would mean knowing
+        which argv happens to be pytest.
+        """
+        for record in self._ctx.command_log:
+            self._state.commands_run.append(record)
+            if call.name != "run_tests":
+                continue
+            self._state.test_results.append(
+                TestRun(
+                    argv=record.argv,
+                    passed=record.exit_code == 0,
+                    exit_code=record.exit_code,
+                    summary=_last_line(self._state.tool_results[-1].result.output),
+                    duration_ms=record.duration_ms,
+                )
+            )
+        self._ctx.command_log.clear()
 
     # -- bookkeeping --------------------------------------------------------
 
@@ -369,6 +400,13 @@ class CodingSession:
             files_inspected=state.files_inspected,
         )
         return state
+
+
+def _last_line(text: str, limit: int = 200) -> str:
+    """The last non-empty line of a tool's output -- for pytest that is the
+    summary line ("1 failed, 2 passed"), which is the useful part."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-1][:limit] if lines else ""
 
 
 def _signature(call: ToolCall) -> str:

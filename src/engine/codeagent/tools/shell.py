@@ -104,7 +104,8 @@ class RunCommandTool:
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         def _run() -> ToolResult:
             argv = argv_arg(args, "argv")
-            result, _record = execute(argv, ctx)
+            result, record = execute(argv, ctx)
+            ctx.command_log.append(record)
             return result
 
         return guarded(_run)
@@ -116,7 +117,8 @@ class RunTestsTool:
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         def _run() -> ToolResult:
-            result, _record = execute(["python", "-m", "pytest", "-q"], ctx)
+            result, record = execute(["python", "-m", "pytest", "-q"], ctx)
+            ctx.command_log.append(record)
             return result
 
         return guarded(_run)
