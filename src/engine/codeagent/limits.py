@@ -84,6 +84,24 @@ class Limits:
     max_snapshot_bytes: int = 200_000
     max_repair_rounds: int = 2
 
+    # Debug Agent (D1). The reproduction gate and the evidence it collects.
+    #
+    # repro_timeout_seconds is separate from command_timeout_seconds because a
+    # reproduction is the one command whose *failure to finish* is a terminal
+    # result for the whole run, not an observation the agent can react to.
+    #
+    # Traceback parsing reads the already-truncated output tails rather than the
+    # raw streams, so max_repro_output_bytes bounds the parser's input too and
+    # no separate "lines scanned" limit is needed.
+    repro_timeout_seconds: float = 120.0
+    max_repro_output_bytes: int = 8_000
+    max_evidence_frames: int = 10
+    max_referenced_files: int = 20
+    # One exception message or summary. Model-free text, but it comes from a
+    # child process, and an unbounded field in a report is how a log becomes a
+    # transcript.
+    max_evidence_text_chars: int = 500
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))

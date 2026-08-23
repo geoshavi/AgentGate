@@ -14,6 +14,7 @@ repair. ``ok=False`` is reserved for the command never having run.
 
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from engine.codeagent.policy import scrub_env
@@ -27,16 +28,44 @@ from engine.codeagent.tools.base import (
 )
 
 
-def execute(argv: list[str], ctx: ToolContext) -> tuple[ToolResult, CommandRun]:
-    """Policy-check and run ``argv`` inside the workspace.
+@dataclass(frozen=True)
+class CompletedCommand:
+    """One executed command, with its streams still separate.
 
-    Returns the tool result and a ``CommandRun`` record for the session state.
-    Raises ``CommandDenied`` if the policy refuses -- callers reach this
-    through ``guarded``, which turns that into an error result.
+    ``execute`` immediately combines stdout and stderr because that is the shape
+    a model observation needs. The Debug Agent's evidence record needs them
+    apart, so the raw form is exposed here rather than reconstructed by parsing
+    the combined text -- and, more importantly, rather than by giving the Debug
+    Agent a second subprocess call of its own. There is exactly one place in
+    this codebase that spawns a child process, and this is it.
+
+    ``exit_code`` is None exactly when the command produced no status:
+    ``timed_out`` or ``unavailable`` says which.
+    """
+
+    argv: list[str]
+    stdout: str
+    stderr: str
+    exit_code: int | None
+    timed_out: bool
+    unavailable: str | None
+    duration_ms: int
+
+
+def run_argv(
+    argv: list[str], ctx: ToolContext, *, timeout_seconds: float | None = None
+) -> CompletedCommand:
+    """Policy-check and run ``argv`` inside the workspace, returning raw streams.
+
+    Raises ``CommandDenied`` if the policy refuses -- a refusal happens before
+    anything is spawned, so a denied command never becomes a CompletedCommand.
     """
     resolved = ctx.policy.check(argv)
+    timeout = ctx.limits.command_timeout_seconds if timeout_seconds is None else timeout_seconds
     started = time.monotonic()
-    timeout = ctx.limits.command_timeout_seconds
+
+    def _elapsed() -> int:
+        return int((time.monotonic() - started) * 1000)
 
     try:
         completed = subprocess.run(
@@ -50,23 +79,53 @@ def execute(argv: list[str], ctx: ToolContext) -> tuple[ToolResult, CommandRun]:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        elapsed = int((time.monotonic() - started) * 1000)
-        record = CommandRun(argv=argv, exit_code=None, timed_out=True, duration_ms=elapsed)
+        return CompletedCommand(argv, "", "", None, True, None, _elapsed())
+    except FileNotFoundError as exc:
+        return CompletedCommand(argv, "", "", None, False, str(exc), _elapsed())
+
+    return CompletedCommand(
+        argv=argv,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+        timed_out=False,
+        unavailable=None,
+        duration_ms=_elapsed(),
+    )
+
+
+def execute(argv: list[str], ctx: ToolContext) -> tuple[ToolResult, CommandRun]:
+    """Policy-check and run ``argv`` inside the workspace.
+
+    Returns the tool result and a ``CommandRun`` record for the session state.
+    Raises ``CommandDenied`` if the policy refuses -- callers reach this
+    through ``guarded``, which turns that into an error result.
+    """
+    done = run_argv(argv, ctx)
+    timeout = ctx.limits.command_timeout_seconds
+
+    if done.timed_out:
+        record = CommandRun(
+            argv=argv, exit_code=None, timed_out=True, duration_ms=done.duration_ms
+        )
         return (
             failed(f"command timed out after {timeout}s: {' '.join(argv)}"),
             record,
         )
-    except FileNotFoundError as exc:
-        elapsed = int((time.monotonic() - started) * 1000)
-        record = CommandRun(argv=argv, exit_code=None, timed_out=False, duration_ms=elapsed)
-        return failed(f"program not found: {exc}"), record
+    if done.unavailable is not None:
+        record = CommandRun(
+            argv=argv, exit_code=None, timed_out=False, duration_ms=done.duration_ms
+        )
+        return failed(f"program not found: {done.unavailable}"), record
 
-    elapsed = int((time.monotonic() - started) * 1000)
-    body = _combine(completed.stdout, completed.stderr, completed.returncode)
+    # mypy: neither timed out nor unavailable, so a status exists.
+    assert done.exit_code is not None
+    elapsed = done.duration_ms
+    body = _combine(done.stdout, done.stderr, done.exit_code)
     clipped, was_truncated = truncate(body, ctx.limits.max_tool_output_bytes)
     record = CommandRun(
         argv=argv,
-        exit_code=completed.returncode,
+        exit_code=done.exit_code,
         timed_out=False,
         duration_ms=elapsed,
         output_truncated=was_truncated,
@@ -75,7 +134,7 @@ def execute(argv: list[str], ctx: ToolContext) -> tuple[ToolResult, CommandRun]:
         ok=True,
         output=clipped,
         truncated=was_truncated,
-        exit_code=completed.returncode,
+        exit_code=done.exit_code,
     )
     return result, record
 
@@ -124,4 +183,4 @@ class RunTestsTool:
         return guarded(_run)
 
 
-__all__ = ["RunCommandTool", "RunTestsTool", "execute"]
+__all__ = ["CompletedCommand", "RunCommandTool", "RunTestsTool", "execute", "run_argv"]

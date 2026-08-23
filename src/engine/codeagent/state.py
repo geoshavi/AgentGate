@@ -41,6 +41,10 @@ class SessionStatus(str, Enum):
     ABORTED_POLICY = "ABORTED_POLICY"
     ABORTED_PROTOCOL = "ABORTED_PROTOCOL"
     ABORTED_WORKSPACE = "ABORTED_WORKSPACE"
+    # Debug Agent (D1): the reported failure could not be observed, so there is
+    # no evidence to debug against. Terminal *before* any edit is permitted --
+    # a fix with no observed failure is an unfalsifiable guess.
+    ABORTED_NO_REPRO = "ABORTED_NO_REPRO"
     ERROR = "ERROR"
 
 
@@ -52,6 +56,10 @@ class Phase(str, Enum):
     any phase, and a terminal status can be reached from any of them.
     """
 
+    # Debug Agent (D1). First, not after PLANNING: the reproduction runs before
+    # anything is planned, because a failure that will not reproduce ends the
+    # run rather than starting one.
+    REPRODUCING = "REPRODUCING"
     PLANNING = "PLANNING"
     EXPLORING = "EXPLORING"
     EDITING = "EDITING"
