@@ -45,6 +45,11 @@ class SessionStatus(str, Enum):
     # no evidence to debug against. Terminal *before* any edit is permitted --
     # a fix with no observed failure is an unfalsifiable guess.
     ABORTED_NO_REPRO = "ABORTED_NO_REPRO"
+    # Debug Agent (D2): the failure reproduced, but no root-cause hypothesis
+    # survived validation. Terminal for the same reason as ABORTED_NO_REPRO --
+    # editing against a diagnosis that points nowhere real is a guess wearing
+    # the costume of an explanation.
+    ABORTED_NO_ROOT_CAUSE = "ABORTED_NO_ROOT_CAUSE"
     ERROR = "ERROR"
 
 
@@ -60,6 +65,9 @@ class Phase(str, Enum):
     # anything is planned, because a failure that will not reproduce ends the
     # run rather than starting one.
     REPRODUCING = "REPRODUCING"
+    # Debug Agent (D2): inspecting evidence-named code to form a hypothesis,
+    # before any plan exists and long before anything is edited.
+    DIAGNOSING = "DIAGNOSING"
     PLANNING = "PLANNING"
     EXPLORING = "EXPLORING"
     EDITING = "EDITING"

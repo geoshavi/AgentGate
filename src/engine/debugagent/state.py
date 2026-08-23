@@ -20,6 +20,7 @@ from typing import Any
 from engine.codeagent.state import Phase, SessionStatus
 from engine.codeagent.workspace import Workspace
 from engine.debugagent.repro import FrozenRepro, ReproOutcome
+from engine.debugagent.rootcause import DiagnosisOutcome
 
 
 @dataclass
@@ -41,6 +42,20 @@ class DebugState:
     reason: str = ""
     evidence: dict[str, Any] | None = None
     files_changed: list[str] = field(default_factory=list)
+
+    # Diagnosis (D2). ``diagnosis_status`` is "" only when diagnosis was never
+    # attempted -- never as a stand-in for a failure, which has its own status.
+    diagnosis_status: str = ""
+    diagnosis_attempts: int = 0
+    diagnosis_errors: list[str] = field(default_factory=list)
+    root_cause: dict[str, Any] | None = None
+    inspected_files: list[str] = field(default_factory=list)
+    # Usage, totalled across every diagnosis attempt. Sourced from the gateway's
+    # own GenerationResult; thinking_tokens is a count, never reasoning text.
+    model_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    thinking_tokens: int = 0
 
     @classmethod
     def from_repro(
@@ -72,6 +87,29 @@ class DebugState:
             files_changed=workspace.changed_files,
         )
 
+    def record_diagnosis(self, outcome: DiagnosisOutcome) -> None:
+        """Fold a diagnosis outcome into the state.
+
+        A failed diagnosis moves the status to ``ABORTED_NO_ROOT_CAUSE`` but
+        leaves ``reproduced`` and ``evidence`` exactly as they were. Losing the
+        hypothesis must not lose the reproduction that earned it -- the evidence
+        is the expensive, deterministic part, and it stays true regardless of
+        what any model failed to conclude about it.
+        """
+        self.phase = Phase.DIAGNOSING
+        self.diagnosis_status = outcome.status.value
+        self.diagnosis_attempts = outcome.attempts
+        self.diagnosis_errors = list(outcome.errors)
+        self.root_cause = None if outcome.root_cause is None else outcome.root_cause.as_dict()
+        self.inspected_files = list(outcome.inspected_files)
+        self.model_calls = outcome.model_calls
+        self.input_tokens = outcome.input_tokens
+        self.output_tokens = outcome.output_tokens
+        self.thinking_tokens = outcome.thinking_tokens
+        terminal = outcome.terminal_status
+        if terminal is not None:
+            self.status = terminal
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
@@ -84,6 +122,15 @@ class DebugState:
             "reason": self.reason,
             "evidence": self.evidence,
             "files_changed": list(self.files_changed),
+            "diagnosis_status": self.diagnosis_status,
+            "diagnosis_attempts": self.diagnosis_attempts,
+            "diagnosis_errors": list(self.diagnosis_errors),
+            "root_cause": self.root_cause,
+            "inspected_files": list(self.inspected_files),
+            "model_calls": self.model_calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "thinking_tokens": self.thinking_tokens,
         }
 
     def to_json(self, *, indent: int | None = 2) -> str:

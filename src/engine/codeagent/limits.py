@@ -102,6 +102,35 @@ class Limits:
     # transcript.
     max_evidence_text_chars: int = 500
 
+    # Debug Agent (D2). Root-cause diagnosis: what the model may see, how much
+    # it may say, and how many times it may try.
+    #
+    # max_rootcause_attempts is 2 for the same reason max_plan_attempts is: the
+    # first attempt plus exactly one retry with the validation errors fed back.
+    # A third attempt has never been the difference between a usable answer and
+    # an unusable one; it is just a third bill.
+    max_rootcause_attempts: int = 2
+    # Evidence-first inspection. The diagnosing model sees the files the failure
+    # actually named, not the repository -- these two bound that selection.
+    max_inspected_files: int = 6
+    max_inspect_file_bytes: int = 6_000
+    max_debug_context_chars: int = 12_000
+    # Bounded search expansion. Terms come from traceback function names, so
+    # these bound how far a *symbol the failure named* may lead -- not how much
+    # of the repository may be trawled. Setting max_search_terms to 0 disables
+    # expansion entirely and leaves inspection purely traceback-driven.
+    max_search_terms: int = 3
+    max_searched_files: int = 3
+    # One summary, mechanism, fix description or evidence reference.
+    max_root_cause_text_chars: int = 800
+    max_related_files: int = 5
+    max_evidence_refs: int = 5
+    # Named separately from max_plan_validation_commands: a plan's commands and
+    # a root cause's are different claims about different things, and coupling
+    # them would mean tuning one silently retunes the other.
+    max_rootcause_validation_commands: int = 3
+    rootcause_max_tokens: int = 1_500
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))

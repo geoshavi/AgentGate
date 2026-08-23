@@ -264,27 +264,49 @@ def test_frozen_repro_equality_is_by_value() -> None:
 # -- D1 makes no model call -------------------------------------------------
 
 
-def test_d1_modules_cannot_reach_a_model_or_provider() -> None:
-    """Structural proof, not a promise: D1 imports no gateway, budget or SDK."""
+def _imports(path: Path) -> list[str]:
     import ast
 
+    names: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names.extend(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.append(node.module)
+    return names
+
+
+def test_the_model_free_modules_cannot_reach_a_model() -> None:
+    """Structural proof, not a promise.
+
+    Scoped to the modules that must never make a model call. D2's rootcause.py
+    is excluded on purpose -- it is *required* to reach the model, and does so
+    through LLMGateway. The package-wide SDK ban below is what stays absolute.
+    """
+    from engine.debugagent import context, evidence
+    from engine.debugagent import repro as repro_module
+
+    violations: list[str] = []
+    for module in (evidence, repro_module, context):
+        for name in _imports(Path(module.__file__)):
+            if name.startswith(("engine.runtime", "engine.providers")):
+                violations.append(f"{module.__name__}: {name}")
+
+    assert violations == []
+
+
+def test_no_debugagent_module_touches_a_provider_sdk() -> None:
+    """Package-wide and unconditional: the gateway is the only way out."""
     from engine import debugagent
 
     root = Path(debugagent.__file__).parent
-    banned = ("engine.runtime", "engine.providers", "anthropic", "openai", "httpx")
-    violations: list[str] = []
-
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
-                if name.startswith(banned):
-                    violations.append(f"{path.name}: {name}")
+    banned = ("engine.providers", "anthropic", "openai", "httpx")
+    violations = [
+        f"{path.name}: {name}"
+        for path in sorted(root.rglob("*.py"))
+        for name in _imports(path)
+        if name.startswith(banned)
+    ]
 
     assert violations == []
 
