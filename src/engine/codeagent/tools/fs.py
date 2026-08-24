@@ -6,6 +6,14 @@ matches are both explicit errors. "Replace the first match" is not offered as
 a behaviour, because a model that supplied an ambiguous anchor did not decide
 which occurrence it meant -- picking one for it is a silent edit to code the
 agent was not asked to touch.
+
+**Edits preserve the file's newline convention.** Python's text mode translates
+on both ends: reading turns every CRLF into LF, and writing turns every LF into
+``os.linesep``. Together that rewrites every line ending in a file on any write
+-- to CRLF on Windows, to LF elsewhere -- so a one-line anchored edit lands as a
+whole-file diff. Editing therefore goes through ``_read_raw``/``_write_raw``,
+which disable translation, and the agent's LF-separated anchor is re-expressed
+in the file's own convention by ``_as_newline`` before it is matched.
 """
 
 from pathlib import Path
@@ -26,10 +34,46 @@ from engine.codeagent.workspace import SKIPPED_DIR_NAMES, is_denied_name
 
 
 def _read_text(path: Path) -> str:
+    """Universal-newline read: what the *model* is shown, always LF."""
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise ToolError(f"{path.name} is not UTF-8 text") from exc
+
+
+def _read_raw(path: Path) -> str:
+    """The file exactly as stored, with its newlines untranslated."""
+    try:
+        with path.open(encoding="utf-8", newline="") as handle:
+            return handle.read()
+    except UnicodeDecodeError as exc:
+        raise ToolError(f"{path.name} is not UTF-8 text") from exc
+
+
+def _write_raw(path: Path, text: str) -> None:
+    """Write ``text`` verbatim. ``newline=""`` is what disables translation."""
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+
+def _dominant_newline(raw: str) -> str:
+    """The newline convention ``raw`` already uses; LF when it has none.
+
+    Counted rather than taken from the first match, so a CRLF file carrying one
+    stray LF still round-trips as CRLF. Ties go to CRLF, which only arise in
+    files that are already mixed.
+    """
+    crlf = raw.count("\r\n")
+    counts = {"\r\n": crlf, "\n": raw.count("\n") - crlf, "\r": raw.count("\r") - crlf}
+    best = max(counts, key=lambda newline: counts[newline])
+    return best if counts[best] else "\n"
+
+
+def _as_newline(text: str, newline: str) -> str:
+    """Re-express LF-separated agent text in the file's own convention."""
+    if newline == "\n":
+        return text
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", newline)
 
 
 class ListFilesTool:
@@ -131,26 +175,39 @@ class WriteFileTool:
             overwrite = bool_arg(args, "overwrite", False)
             path = ctx.workspace.resolve(rel)
 
-            size = len(content.encode("utf-8"))
-            if size > ctx.limits.max_write_bytes:
-                return failed(
-                    f"refusing to write {size} B; max_write_bytes is {ctx.limits.max_write_bytes}"
-                )
+            # LF for a file that does not exist yet: there is no existing
+            # convention to preserve, and the repository's own is LF.
+            newline = "\n"
             if path.exists():
                 if not overwrite:
                     return failed(
                         f"{rel} already exists; pass overwrite=true to replace it, or use "
                         "replace_exact for a targeted edit"
                     )
-                existing = path.read_text(encoding="utf-8", errors="ignore")
+                # errors="ignore" as before: the truncation guard must still
+                # answer for a file this tool would refuse to read as text.
+                with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
+                    existing = handle.read()
                 if existing.strip() and not content.strip():
                     return failed(
                         f"refusing to truncate non-empty file {rel} to empty content"
                     )
+                newline = _dominant_newline(existing)
+
+            # The cap is measured on what actually reaches the disk, not on the
+            # LF form the agent sent. Writing into a CRLF file adds a byte per
+            # line, so checking the pre-conversion string would let a write
+            # through and then serialise it over the ceiling.
+            output = _as_newline(content, newline)
+            size = len(output.encode("utf-8"))
+            if size > ctx.limits.max_write_bytes:
+                return failed(
+                    f"refusing to write {size} B; max_write_bytes is {ctx.limits.max_write_bytes}"
+                )
 
             ctx.workspace.note_changed(path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            _write_raw(path, output)
             return ok(f"wrote {rel} ({size} B)", ctx)
 
         return guarded(_run)
@@ -175,7 +232,15 @@ class ReplaceExactTool:
             if not path.is_file():
                 return failed(f"not a file: {rel}")
 
-            content = _read_text(path)
+            # Raw, so every byte outside the anchor survives the write. The
+            # anchor arrives LF-separated because read_file shows the model a
+            # universal-newline view, so it is re-expressed in the file's own
+            # convention before matching -- otherwise no edit to a CRLF file
+            # could ever find its anchor.
+            content = _read_raw(path)
+            newline = _dominant_newline(content)
+            find = _as_newline(find, newline)
+            replacement = _as_newline(replacement, newline)
             occurrences = content.count(find)
             if occurrences == 0:
                 return failed(
@@ -194,7 +259,7 @@ class ReplaceExactTool:
                 )
 
             ctx.workspace.note_changed(path)
-            path.write_text(content.replace(find, replacement, 1), encoding="utf-8")
+            _write_raw(path, content.replace(find, replacement, 1))
             delta = len(replacement) - len(find)
             return ok(f"replaced 1 occurrence in {rel} ({delta:+d} chars)", ctx)
 

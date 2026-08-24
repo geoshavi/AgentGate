@@ -143,22 +143,35 @@ class AgentGateResult:
 
 @dataclass(frozen=True)
 class UsageTotals:
-    """What the run cost.
+    """What the run cost, with the agent and judge shares named apart.
 
-    ``model_calls`` and the token fields count the *agent* phases -- diagnosis
-    and fixing -- from each phase's own per-call accounting. Judge lens calls
-    are not included there, because neither phase can see them.
-    ``tokens_spent`` and ``spend`` come from the shared BudgetController and do
-    cover the whole run, judges included. They are different measurements of
-    different things and are reported as such rather than reconciled into one
-    number that would be wrong for both.
+    Every field is prefixed by what it actually covers, because the unprefixed
+    names were read as whole-run totals: a D4 live run reported "8 model calls"
+    beside a database holding 11, the difference being three judge lenses that
+    the agent phases cannot see.
+
+    ``agent_*`` comes from the diagnosis and fix phases' own per-call
+    accounting. ``total_tokens`` and ``spend`` come from the shared
+    BudgetController and cover the whole run, judges included. ``judge_tokens``
+    is the remainder -- exact, because both inputs are exact and verification is
+    the only other thing that spends.
+
+    **There is deliberately no judge_model_calls or total_model_calls.**
+    ``VerificationOutcome`` carries no call count and ``BudgetController``
+    counts tokens rather than calls, so neither number exists on this side of
+    the verification seam. Deriving one from the lens count would be a guess
+    that goes wrong precisely when the judge retries, and a wrong count is worse
+    than an absent one. The judge's share is reported in tokens, which is
+    measured.
     """
 
-    model_calls: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    thinking_tokens: int = 0
-    tokens_spent: int = 0
+    agent_model_calls: int = 0
+    agent_input_tokens: int = 0
+    agent_output_tokens: int = 0
+    agent_thinking_tokens: int = 0
+    agent_tokens: int = 0
+    judge_tokens: int = 0
+    total_tokens: int = 0
     spend: str = "0"
     elapsed_ms: int = 0
 
@@ -306,12 +319,19 @@ def _usage(run: DebugRun) -> UsageTotals:
     phases: list[DiagnosisOutcome | FixOutcome] = [
         phase for phase in (run.diagnosis, run.fix) if phase is not None
     ]
+    agent_input = sum(phase.input_tokens for phase in phases)
+    agent_output = sum(phase.output_tokens for phase in phases)
+    agent_tokens = agent_input + agent_output
     return UsageTotals(
-        model_calls=sum(phase.model_calls for phase in phases),
-        input_tokens=sum(phase.input_tokens for phase in phases),
-        output_tokens=sum(phase.output_tokens for phase in phases),
-        thinking_tokens=sum(phase.thinking_tokens for phase in phases),
-        tokens_spent=run.tokens_spent,
+        agent_model_calls=sum(phase.model_calls for phase in phases),
+        agent_input_tokens=agent_input,
+        agent_output_tokens=agent_output,
+        agent_thinking_tokens=sum(phase.thinking_tokens for phase in phases),
+        agent_tokens=agent_tokens,
+        # Clamped at zero: the two totals come from different counters, and a
+        # negative remainder would be a reporting artefact, not a measurement.
+        judge_tokens=max(0, run.tokens_spent - agent_tokens),
+        total_tokens=run.tokens_spent,
         spend=str(run.spend),
         elapsed_ms=run.elapsed_ms,
     )
@@ -386,8 +406,9 @@ def render_debug_report(report: DebugReport) -> str:
         "",
         f"verdict   {'PASSED' if report.passed else report.status}   {report.reason}",
         (
-            f"usage     {usage.model_calls} model call(s), {usage.tokens_spent} tokens, "
-            f"${usage.spend}, {usage.elapsed_ms} ms"
+            f"usage     agent {usage.agent_model_calls} call(s)/{usage.agent_tokens} tokens "
+            f"+ judges {usage.judge_tokens} tokens "
+            f"= {usage.total_tokens} total, ${usage.spend}, {usage.elapsed_ms} ms"
         ),
     ]
     return "\n".join(lines)

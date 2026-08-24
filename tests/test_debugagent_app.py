@@ -581,10 +581,19 @@ def test_the_report_carries_every_required_field(tmp_path: Path) -> None:
         "INFERRED",
     }
     assert payload["agentgate"]["automated_gates"]
-    assert payload["usage"]["model_calls"] >= 2
+    assert payload["usage"]["agent_model_calls"] >= 2
     assert payload["usage"]["elapsed_ms"] >= 0
-    assert payload["usage"]["tokens_spent"] > 0
+    assert payload["usage"]["total_tokens"] > 0
     assert Decimal(payload["usage"]["spend"]) > 0
+
+    # The agent/judge split is named, not left to the reader to infer.
+    usage = payload["usage"]
+    assert usage["agent_tokens"] == usage["agent_input_tokens"] + usage["agent_output_tokens"]
+    assert usage["agent_tokens"] + usage["judge_tokens"] == usage["total_tokens"]
+    # Counts that do not exist on this side of the verification seam are absent
+    # rather than guessed.
+    assert "judge_model_calls" not in usage
+    assert "total_model_calls" not in usage
 
 
 def test_the_report_json_holds_no_prompt_or_reasoning_text(tmp_path: Path) -> None:
