@@ -103,6 +103,10 @@ class FixOutcome:
     status: ProofStatus
     session_status: SessionStatus
     reason: str
+    # The fixing session's own closing sentence. Carried so a report can show
+    # what the agent thought it did; it decides nothing, and a session that
+    # signs off "fixed the bug" over a failing reproduction is still UNPROVEN.
+    final_summary: str = ""
     root_cause: RootCause | None = None
     proof: ProofResult | None = None
     repairs_used: int = 0
@@ -127,6 +131,7 @@ class FixOutcome:
             "proof_status": self.status.value,
             "session_status": self.session_status.value,
             "reason": self.reason,
+            "final_summary": self.final_summary,
             "root_cause": None if self.root_cause is None else self.root_cause.as_dict(),
             "proof": None if self.proof is None else self.proof.as_dict(),
             "repairs_used": self.repairs_used,
@@ -453,6 +458,7 @@ def _finish(
         status=status,
         session_status=states[-1].status if states else SessionStatus.ERROR,
         reason=reason,
+        final_summary=(states[-1].final_summary or "") if states else "",
         root_cause=root_cause,
         proof=proof,
         repairs_used=repairs,

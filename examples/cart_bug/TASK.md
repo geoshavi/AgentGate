@@ -48,7 +48,25 @@ report that as a fix. Verified:
 
 In Windows PowerShell, against a COPY — the Debug Agent edits in place:
 
-    Copy-Item -Recurse examples\cart_bug "$env:TEMP\cart_bug"
+```powershell
+Copy-Item -Recurse examples\cart_bug "$env:TEMP\cart_bug"
+
+engine debug "Adding nothing to the cart and asking for a total crashes instead of returning the shipping charge." `
+  --workspace "$env:TEMP\cart_bug" `
+  --repro=python --repro=-m --repro=pytest --repro=-q `
+  '--repro=tests/test_cart.py::test_empty_cart_is_shipping_only' `
+  --budget 0.25
+```
+
+`--repro` is one argv token per flag — there is no shell in this path, so
+nothing is word-split or interpreted. The `--flag=value` spelling is required
+for `-m` and `-q`, which argparse would otherwise read as options; using it for
+every token means one rule rather than two. The token carrying `::` is
+single-quoted so PowerShell passes it through untouched.
+
+The regression suite defaults to `python -m pytest -q`, so `--suite` is only
+needed to override it. Expected result: **PASSED**, exit 0. See
+[`docs/debug-agent.md`](../../docs/debug-agent.md).
 
 The fixture is committed in its **broken** state. `python -m pytest -q` inside
 it reports `1 failed, 3 passed`; if it does not, the fixture has been edited and

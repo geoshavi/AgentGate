@@ -100,6 +100,97 @@ def critic(defects: list[dict] | None = None) -> str:
 CLEAN_CRITIC = critic()
 
 
+def rootcause_block(**payload: object) -> str:
+    return f"```rootcause\n{json.dumps(payload)}\n```"
+
+
+# The two Debug Agent system prompts, identified by their opening sentence.
+# Routing on the prompt rather than on call order is what lets a scenario
+# script the phases independently: a run that never reaches the fix phase
+# simply never draws from that stream.
+DIAGNOSIS_MARKER = "You are diagnosing a reproduced software failure"
+FIX_MARKER = "You are a debugging agent"
+
+
+class DebugScenarioProvider:
+    """One offline provider for a whole `engine debug` run.
+
+    The same idea as ``ScenarioProvider`` -- route by system prompt into
+    independent scripted streams -- for the Debug Agent's three model-calling
+    phases: diagnosis, the fixing session, and the judge lenses. Extended rather
+    than forked so both agents share one fake; the Coding Agent's planner stream
+    has no counterpart here because the Debug Agent does not plan.
+
+    Judge responses are per verification round: all lenses of a round get the
+    same answer, and the round advances every len(lens_prompts) calls.
+    """
+
+    name = "debug-scenario"
+
+    def __init__(
+        self,
+        *,
+        diagnosis_turns: list[str],
+        fix_turns: list[str],
+        judge_rounds: list[str] | None = None,
+        lens_prompts: tuple[str, ...] = (),
+        raise_on_judge: bool = False,
+    ) -> None:
+        self._diagnosis_turns = diagnosis_turns
+        self._fix_turns = fix_turns
+        self._judge_rounds = judge_rounds or [CLEAN_CRITIC]
+        self._lens_prompts = set(lens_prompts)
+        self._raise_on_judge = raise_on_judge
+        self.diagnosis_calls = 0
+        self.fix_calls = 0
+        self.judge_calls = 0
+        self.seen_systems: list[str | None] = []
+        self.seen_messages: list[list[Message]] = []
+
+    @property
+    def model_calls(self) -> int:
+        return self.diagnosis_calls + self.fix_calls + self.judge_calls
+
+    def generate(
+        self,
+        messages: list[Message],
+        model: str,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+        timeout_seconds: float | None = None,
+    ) -> GenerationResult:
+        self.seen_systems.append(system)
+        self.seen_messages.append(list(messages))
+
+        if system in self._lens_prompts:
+            self.judge_calls += 1
+            if self._raise_on_judge:
+                raise RuntimeError("judge exploded")
+            lenses = max(1, len(self._lens_prompts))
+            index = min((self.judge_calls - 1) // lenses, len(self._judge_rounds) - 1)
+            text = self._judge_rounds[index]
+        elif system is not None and DIAGNOSIS_MARKER in system:
+            index = min(self.diagnosis_calls, len(self._diagnosis_turns) - 1)
+            self.diagnosis_calls += 1
+            text = self._diagnosis_turns[index]
+        elif system is not None and FIX_MARKER in system:
+            index = min(self.fix_calls, len(self._fix_turns) - 1)
+            self.fix_calls += 1
+            text = self._fix_turns[index]
+        else:  # pragma: no cover - an unrouted prompt is a test bug, not a path
+            raise AssertionError(f"unroutable system prompt: {system!r}")
+
+        return GenerationResult(
+            text=text,
+            model=model,
+            provider=self.name,
+            input_tokens=10,
+            output_tokens=20,
+            stop_reason="end_turn",
+        )
+
+
 class ScenarioProvider:
     """One offline provider for a whole end-to-end run.
 

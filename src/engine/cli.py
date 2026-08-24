@@ -11,6 +11,34 @@ from engine.reporting.report import generate_report
 from engine.runtime.gateway import LLMGateway
 
 
+def _debug_task_text(args: argparse.Namespace) -> str:
+    """The reported bug, from exactly one of the two accepted sources.
+
+    ``--task-file`` exists because PowerShell 5.1 mangles embedded double quotes
+    on their way to a native program, which bit the Coding Agent's live demo. A
+    file has no quoting rules at all, so a bug report containing a traceback or
+    a quoted error message can be passed verbatim.
+
+    Both sources given is refused rather than silently preferring one: the two
+    would disagree, and picking a winner would make the run's task text depend
+    on a rule nobody read.
+    """
+    if args.task is not None and args.task_file is not None:
+        raise ValueError("give the bug report as an argument or --task-file, not both")
+    if args.task_file is not None:
+        path = Path(args.task_file)
+        if not path.is_file():
+            raise ValueError(f"--task-file does not exist: {path}")
+        text = path.read_text(encoding="utf-8")
+    elif args.task is not None:
+        text = args.task
+    else:
+        raise ValueError("a bug report is required: pass it as an argument or use --task-file")
+    if not text.strip():
+        raise ValueError("the bug report is empty")
+    return text
+
+
 def main() -> None:
     # Windows consoles default to cp1252 and agent-generated content routinely
     # contains characters it cannot encode (U+2264, U+2265, ...). Reconfigure
@@ -64,6 +92,102 @@ def main() -> None:
     )
     code_parser.add_argument(
         "--json", dest="json_path", default=None, metavar="PATH", help="Also write the report JSON here"
+    )
+
+    debug_parser = subparsers.add_parser(
+        "debug",
+        help="Debug a reported failure: reproduce, diagnose, fix, prove, verify",
+        description=(
+            "Reproduces a reported failure, diagnoses it, applies the smallest fix, "
+            "and proves the fix by re-running the frozen reproduction and the full "
+            "regression suite before AgentGate verifies the change. The workspace is "
+            "edited IN PLACE. Exit 0 means proven AND verified, 1 means reviewed and "
+            "blocked or not proven, 2 means the run never reached a verdict."
+        ),
+        epilog=(
+            "Commands are argv, never shell strings: pass one token per --repro/--suite "
+            "flag, using the --flag=value form (required whenever a token starts with '-'). "
+            "Example: --repro=python --repro=-m --repro=pytest --repro=-q "
+            "--repro=tests/test_cart.py::test_empty_cart"
+        ),
+    )
+    debug_parser.add_argument(
+        "task",
+        nargs="?",
+        default=None,
+        help="The reported bug, as a user would describe it (or use --task-file)",
+    )
+    debug_parser.add_argument(
+        "--task-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Read the reported bug from this file instead of the argument. Use this "
+            "when the text contains quotes: PowerShell 5.1 mangles embedded double "
+            "quotes on their way to a native program."
+        ),
+    )
+    debug_parser.add_argument(
+        "--workspace", required=True, help="Directory the agent may read and edit (in place)"
+    )
+    debug_parser.add_argument(
+        "--repro",
+        action="append",
+        default=None,
+        metavar="TOKEN",
+        required=True,
+        help="One argv token of the reproduction command. Repeat, once per token.",
+    )
+    debug_parser.add_argument(
+        "--suite",
+        action="append",
+        default=None,
+        metavar="TOKEN",
+        # The default is stated literally rather than read from
+        # debugagent.app.DEFAULT_SUITE_ARGV: building this parser happens for
+        # every subcommand, so importing the Debug Agent to render a help
+        # string would put it on `engine bench`'s import path. The value is
+        # applied from that constant in the dispatch branch below, and
+        # test_debugagent_cli.py asserts the two agree.
+        help=(
+            "One argv token of the regression suite command. Repeat, once per token. "
+            "Default: python -m pytest -q"
+        ),
+    )
+    debug_parser.add_argument("--provider", default="anthropic", help="Provider to use")
+    debug_parser.add_argument(
+        "--model", default=None, help="Model for the agent (default: this provider's coding model)"
+    )
+    debug_parser.add_argument(
+        "--judge-model", default=None, help="Model for the judge lenses (default: the judge model)"
+    )
+    debug_parser.add_argument(
+        "--budget", default=None, metavar="USD", help="Max spend for the whole run, e.g. 0.25"
+    )
+    debug_parser.add_argument("--max-tokens", type=int, default=None, help="Token ceiling")
+    debug_parser.add_argument(
+        "--timeout", type=float, default=None, metavar="SECONDS", help="Wall-clock deadline"
+    )
+    debug_parser.add_argument(
+        "--repro-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Deadline for one run of the reproduction or suite command",
+    )
+    debug_parser.add_argument("--max-turns", type=int, default=None, help="Model turns allowed")
+    debug_parser.add_argument(
+        "--max-repairs", type=int, default=None, help="Proof-driven repair rounds"
+    )
+    debug_parser.add_argument(
+        "--max-files", type=int, default=None, help="Distinct files the fix may change"
+    )
+    debug_parser.add_argument(
+        "--json",
+        dest="json_path",
+        default=None,
+        metavar="PATH",
+        help="Also write the report JSON here",
     )
 
     serve_parser = subparsers.add_parser(
@@ -161,6 +285,73 @@ def main() -> None:
             print(f"json      {args.json_path}")
 
         sys.exit(code_result.exit_code)
+    elif args.command == "debug":
+        from engine.debugagent.app import (
+            DEFAULT_SUITE_ARGV,
+            EXIT_ERROR,
+            WorkspaceRejected,
+            run_debug_task,
+        )
+        from engine.debugagent.limits import DEBUG_LIMITS
+        from engine.debugagent.report import render_debug_report
+
+        config = load_config()
+        models = DEFAULT_MODELS[args.provider]
+
+        try:
+            task_text = _debug_task_text(args)
+        except ValueError as exc:
+            debug_parser.error(str(exc))
+
+        overrides = {
+            "session_timeout_seconds": args.timeout,
+            "repro_timeout_seconds": args.repro_timeout,
+            "max_turns": args.max_turns,
+            "max_repair_rounds": args.max_repairs,
+            "max_files_changed": args.max_files,
+        }
+        limits = replace(DEBUG_LIMITS, **{k: v for k, v in overrides.items() if v is not None})
+
+        try:
+            gateway = LLMGateway.from_config(args.provider, config)
+            debug_result = run_debug_task(
+                task_text=task_text,
+                workspace_path=Path(args.workspace),
+                repro_argv=list(args.repro),
+                suite_argv=list(args.suite) if args.suite else list(DEFAULT_SUITE_ARGV),
+                gateway=gateway,
+                model=args.model or models["coding"],
+                judge_model=args.judge_model or models["judge"],
+                provider_name=args.provider,
+                limits=limits,
+                # str -> Decimal, never float: see runtime/budget.py.
+                planned_budget=Decimal(args.budget) if args.budget else config.planned_budget,
+                max_tokens=args.max_tokens or config.max_tokens,
+                artifacts_root=config.db_path.parent / "debugagent",
+                db_path=config.db_path,
+            )
+        except WorkspaceRejected as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(EXIT_ERROR)
+        except (TypeError, ValueError) as exc:
+            # A malformed or policy-refused command. Nothing ran and nothing
+            # was edited, so this is a usage error, not a run outcome.
+            print(f"ERROR: {exc}")
+            sys.exit(EXIT_ERROR)
+        except Exception as exc:  # noqa: BLE001 - a CLI reports failures, it does not traceback
+            print(f"ERROR: {type(exc).__name__}: {exc}")
+            sys.exit(EXIT_ERROR)
+
+        print(render_debug_report(debug_result.report))
+        if debug_result.report_path is not None:
+            print(f"report    {debug_result.report_path}")
+        if debug_result.log_path is not None:
+            print(f"log       {debug_result.log_path}")
+        if args.json_path:
+            Path(args.json_path).write_text(debug_result.report.to_json(), encoding="utf-8")
+            print(f"json      {args.json_path}")
+
+        sys.exit(debug_result.exit_code)
     elif args.command == "serve":
         from engine.api import serve
 
