@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from engine.capabilities.external.config import ExternalConfig, load_external_config
 from engine.capabilities.skills import SkillBounds, SkillRoot
 from engine.codeagent.capabilities import build_capabilities
 from engine.codeagent.limits import DEFAULT_LIMITS, Limits
@@ -130,6 +131,8 @@ def run_coding_task(
     skill_bounds: SkillBounds | None = None,
     detect_tests: bool = False,
     include_builtin_skills: bool = False,
+    capabilities_config: Path | None = None,
+    external_config: ExternalConfig | None = None,
 ) -> CodeRunResult:
     """Run one task end to end and return its report and exit code.
 
@@ -145,11 +148,19 @@ def run_coding_task(
     # before the skill content was read, which is what makes a skill root inside
     # the workspace safe rather than merely permitted. No roots -- the default --
     # yields an empty bundle and today's behaviour exactly.
+    # Operator-owned and read before any session exists. Absent or incomplete
+    # config yields an empty policy and no port, so no tool is registered.
+    # ``external_config`` lets a caller supply an already-built one, which is
+    # how the offline acceptance suite substitutes the transport's opener --
+    # the single seam between this system and a socket.
+    external = external_config or load_external_config(capabilities_config)
     capabilities = build_capabilities(
         skill_roots=skill_roots,
         bounds=skill_bounds,
         detect_tests=detect_tests,
         include_builtin_skills=include_builtin_skills,
+        docs=external.docs,
+        egress_policy=external.policy,
         # So a first-party root that happens to sit inside the target workspace
         # -- AgentGate debugging its own repository -- is recorded as overlapping
         # rather than mistaken for an external one.

@@ -87,6 +87,21 @@ alone:
           otherwise keep apart (e.g. an import of engine.state would hand
           providers/ a path to the database). Keeping it a stdlib-only leaf
           is what makes it safe for everyone to depend on.
+  Rule I: only capabilities/external/transport.py may import a network module --
+          socket, ssl, http, urllib, an HTTP client, or an MCP SDK. One egress
+          chokepoint, exactly as Rule B gives provider SDKs one.
+
+          This is what lets the external capability be accepted offline. C6
+          proved the policy, the ledger, the port vocabulary and the adapter
+          against a scripted fake; C7 added a real transport, and this rule is
+          the evidence that the fake was not merely standing in for something
+          that had already leaked elsewhere. Every module except that one file
+          is provably incapable of a network call, so a suite that opens no
+          socket is a statement about the code rather than about the test setup.
+
+          The transport speaks Streamable HTTP over stdlib urllib rather than
+          through an MCP SDK: an SDK would bring its own transports, and those
+          would live outside the one file this rule names.
   Rule H: engine/capabilities/ must not import codeagent/ or debugagent/, and
           must not reach providers/ or a provider SDK. The capability layer
           (Agent Skills, and later test detection and external lookups) is a
@@ -113,6 +128,17 @@ SRC_ROOT = Path(__file__).parent.parent / "src" / "engine"
 
 # Extend as real SDKs are added (openai, google.generativeai, ollama, ...).
 PROVIDER_SDK_MODULES = {"anthropic"}
+
+# Modules that can open a connection. Rule I confines every one of them to
+# capabilities/external/transport.py.
+NETWORK_MODULES = {"socket", "ssl", "http", "httpx", "requests", "urllib", "aiohttp", "mcp"}
+
+# One standing exception, and it is not egress. `engine serve` runs a local
+# review API, and http.server ACCEPTS connections rather than opening them.
+# Rule I governs what may leave this machine, so an inbound listener is out of
+# its scope -- while http.client, which does open connections, stays caught
+# everywhere including api.py.
+NETWORK_ALLOWANCES = {("api.py", "http.server")}
 
 GATEWAY_FILE = SRC_ROOT / "runtime" / "gateway.py"
 LLM_TYPES_FILE = SRC_ROOT / "llm_types.py"
@@ -351,6 +377,42 @@ def test_rule_h_capabilities_does_not_reach_a_provider() -> None:
         "engine/capabilities/ must not reach a provider or a provider SDK:\n"
         + "\n".join(violations)
     )
+
+
+def test_rule_i_only_the_transport_reaches_a_network() -> None:
+    """One egress chokepoint, exactly as Rule B gives provider SDKs one.
+
+    A network module anywhere else would mean the boundary that decides what may
+    leave this machine is no longer the only thing that can leave it. Judged by
+    import path, so it covers a stdlib socket, an HTTP client, and an MCP SDK
+    alike -- and it is what lets the whole external capability be accepted with
+    no live call: everything except this one file is provably incapable of one.
+    """
+    allowed = SRC_ROOT / "capabilities" / "external" / "transport.py"
+    violations = []
+    for path in _iter_source_files():
+        if path == allowed:
+            continue
+        for name in _imported_module_names(path):
+            if (path.name, name) in NETWORK_ALLOWANCES:
+                continue
+            if name.split(".")[0] in NETWORK_MODULES:
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule I)")
+    assert not violations, (
+        "only capabilities/external/transport.py may reach a network:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_rule_i_the_transport_pulls_in_no_mcp_sdk() -> None:
+    """The transport speaks the protocol directly over stdlib HTTP. An SDK would
+    bring its own transports, and those would sit outside this rule's one file.
+    """
+    allowed = SRC_ROOT / "capabilities" / "external" / "transport.py"
+    imported = {name.split(".")[0] for name in _imported_module_names(allowed)}
+
+    assert "mcp" not in imported
+    assert imported & {"urllib"}, "the transport should reach the network through stdlib urllib"
 
 
 def test_rule_g_the_agents_do_not_reach_a_provider() -> None:

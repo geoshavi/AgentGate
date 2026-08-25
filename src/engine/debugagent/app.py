@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from engine.capabilities.external.config import ExternalConfig, load_external_config
 from engine.capabilities.skills import SkillBounds, SkillRoot
 from engine.codeagent.app import (
     EXIT_ERROR,
@@ -110,6 +111,8 @@ def run_debug_task(
     skill_bounds: SkillBounds | None = None,
     detect_tests: bool = False,
     include_builtin_skills: bool = False,
+    capabilities_config: Path | None = None,
+    external_config: ExternalConfig | None = None,
 ) -> DebugRunResult:
     """Debug one reported failure end to end.
 
@@ -134,11 +137,17 @@ def run_debug_task(
     # immutable, so there is no point at which either could be reached. The
     # snapshot itself happens inside build_capabilities, before any tool object
     # that could edit the workspace is constructed.
+    # Same operator-owned config as the Coding Agent, and the same closed
+    # default. It reaches the FIX session only -- diagnosis stays a bounded
+    # no-tool call -- and it is read after both commands are already frozen.
+    external = external_config or load_external_config(capabilities_config)
     capabilities = build_capabilities(
         skill_roots=skill_roots,
         bounds=skill_bounds,
         detect_tests=detect_tests,
         include_builtin_skills=include_builtin_skills,
+        docs=external.docs,
+        egress_policy=external.policy,
         workspace_root=workspace.root,
     )
 

@@ -423,10 +423,16 @@ def test_a_budget_spent_by_the_first_hop_fails_before_the_second() -> None:
 # -- no SDK, no transport, no network ----------------------------------------
 
 
-def test_the_external_package_imports_no_transport_or_sdk() -> None:
-    """C6 ships the boundary, not the wire. A network import here would mean the
-    thing that decides what may leave the machine was written after the thing
-    that leaves it.
+def test_only_the_transport_module_reaches_a_network() -> None:
+    """Every module of this package except ``transport.py`` is incapable of a
+    network call.
+
+    C6 asserted the package held no wire at all; C7 added one, in exactly one
+    file. The property that matters is unchanged and is what makes offline
+    acceptance meaningful: the policy, the ledger, the port and the adapter
+    cannot reach out, so substituting the transport's opener substitutes this
+    system's entire ability to do so. Architecture Rule I states the same thing
+    repository-wide.
 
     Checked over the import graph rather than the raw text: a prose mention of
     "subprocess" while explaining what CommandPolicy governs is not an import,
@@ -438,8 +444,12 @@ def test_the_external_package_imports_no_transport_or_sdk() -> None:
     import engine.capabilities.external as pkg
 
     banned = {"socket", "ssl", "http", "httpx", "requests", "urllib", "subprocess", "mcp", "asyncio"}
+    # config.py imports transport.py by name, which is not itself a network
+    # import; the ban is on modules that can open a connection.
     violations: list[str] = []
     for path in sorted(Path(pkg.__path__[0]).glob("*.py")):
+        if path.name == "transport.py":
+            continue  # the one permitted egress chokepoint -- see Rule I
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
