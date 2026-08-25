@@ -26,6 +26,7 @@ from engine.runtime.budget import BudgetController, BudgetExceededError
 from engine.runtime.gateway import LLMGateway
 from engine.state.models import VerificationResult
 from engine.verification.judge import LENSES
+from engine.verification.pipeline import read_code_snapshot
 
 JUDGE_MODEL = MODEL
 
@@ -358,13 +359,126 @@ def test_budget_exhaustion_during_verification_fails_closed(tmp_path: Path) -> N
 # -- defect sanitising -------------------------------------------------------
 
 
-def test_sanitize_keeps_only_the_schema_keys() -> None:
+def test_sanitize_keeps_the_schema_keys_and_the_emitting_lens() -> None:
     raw = [dict(defect(), reasoning="MY HIDDEN CHAIN OF THOUGHT", lens="correctness")]
 
     cleaned = sanitize_defects(raw)
 
-    assert set(cleaned[0]) == {"id", "category", "severity", "location", "fix"}
+    assert set(cleaned[0]) == {"id", "category", "severity", "location", "fix", "lens"}
     assert "reasoning" not in cleaned[0]
+
+
+def test_sanitize_preserves_which_lens_emitted_a_defect() -> None:
+    """The forensic property: a defect's category is the model's claim about
+    itself, and the lens is the ground truth of which reviewer produced it. The
+    two are not required to agree, so the second cannot be inferred from the
+    first."""
+    cleaned = sanitize_defects([dict(defect(), category="CORRECTNESS", lens="security")])
+
+    assert cleaned[0]["category"] == "CORRECTNESS"
+    assert cleaned[0]["lens"] == "security"
+
+
+def test_sanitize_does_not_invent_a_lens_for_an_untagged_defect() -> None:
+    """Automated-gate defects come from automated_defects(), not a lens. An
+    absent key is honest; a fabricated one would attribute ruff to a judge."""
+    cleaned = sanitize_defects([defect()])
+
+    assert "lens" not in cleaned[0]
+
+
+def test_defects_from_two_lenses_sharing_an_id_stay_distinguishable() -> None:
+    """Defect ids are numbered per lens, so two lenses both emit "C1". Before
+    the lens survived sanitising these two collapsed into indistinguishable
+    dicts in the report."""
+    raw = [
+        dict(defect(), id="C1", lens="correctness"),
+        dict(defect(), id="C1", lens="security"),
+    ]
+
+    cleaned = sanitize_defects(raw)
+
+    assert [d["lens"] for d in cleaned] == ["correctness", "security"]
+    assert cleaned[0] != cleaned[1]
+
+
+def test_lens_metadata_changes_no_verdict(tmp_path: Path) -> None:
+    """Observability only: the same defects tagged and untagged must produce
+    the same status, the same reason and the same severities."""
+    outcomes = []
+    for tagged in (False, True):
+        root = tmp_path / f"run-{tagged}"
+        root.mkdir()
+        workspace = ws(root)
+        (workspace.root / "todo.py").write_text("x = 1\n", encoding="utf-8")
+        raw = dict(defect(), lens="security") if tagged else defect()
+        outcomes.append(
+            verify_workspace(
+                workspace=workspace,
+                task_text="t",
+                gateway=LLMGateway(ScriptedProvider([""])),
+                budget=budget(),
+                judge_model=JUDGE_MODEL,
+                task_id="cd-test",
+                changed_files=["todo.py"],
+                verifier=FakeVerifier([("UNVERIFIED", {"defects": [raw]}, gates())]),
+            )
+        )
+
+    plain, tagged_outcome = outcomes
+    assert plain.status == tagged_outcome.status == "UNVERIFIED"
+    assert plain.reason == tagged_outcome.reason
+    assert [d["severity"] for d in plain.defects] == [
+        d["severity"] for d in tagged_outcome.defects
+    ]
+    assert "lens" not in plain.defects[0]
+    assert tagged_outcome.defects[0]["lens"] == "security"
+
+
+def test_repair_feedback_is_unchanged_by_lens_metadata(tmp_path: Path) -> None:
+    """The agent's brief is structured evidence, not judge provenance. Adding
+    the lens must not change a byte of what the fixing model reads."""
+    feedbacks = []
+    for tagged in (False, True):
+        root = tmp_path / f"fb-{tagged}"
+        root.mkdir()
+        workspace = ws(root)
+        (workspace.root / "todo.py").write_text("x = 1\n", encoding="utf-8")
+        raw = dict(defect(), lens="security") if tagged else defect()
+        outcome = verify_workspace(
+            workspace=workspace,
+            task_text="t",
+            gateway=LLMGateway(ScriptedProvider([""])),
+            budget=budget(),
+            judge_model=JUDGE_MODEL,
+            task_id="cd-test",
+            changed_files=["todo.py"],
+            verifier=FakeVerifier([("UNVERIFIED", {"defects": [raw]}, gates())]),
+        )
+        feedbacks.append(render_repair_feedback(outcome))
+
+    assert feedbacks[0] == feedbacks[1]
+    assert "security" not in feedbacks[1]
+
+
+# -- snapshot fidelity -------------------------------------------------------
+
+
+def test_the_snapshot_verification_reads_reflects_the_latest_edit(tmp_path: Path) -> None:
+    """Regression guard for the hypothesis that a judge could be shown pre-fix
+    source: read_code_snapshot reads from disk at call time, so an edit made
+    before verification is the thing verification sees."""
+    workspace = ws(tmp_path)
+    source = workspace.root / "cart.py"
+    source.write_text("def total():\n    return min([])\n", encoding="utf-8")
+    before = read_code_snapshot(workspace.root)
+
+    source.write_text("def total():\n    return 0.0\n", encoding="utf-8")
+    after = read_code_snapshot(workspace.root)
+
+    assert "min([])" in before
+    assert "min([])" not in after
+    assert "return 0.0" in after
 
 
 def test_extra_defect_keys_never_reach_the_agent_or_the_report(tmp_path: Path) -> None:
@@ -672,7 +786,11 @@ def test_real_pipeline_blocking_defect_reaches_unverified(tmp_path: Path) -> Non
     assert result.verification.ran
     # verdict.gate blocked on severity, and the defects came back structured.
     assert result.verification.defects
-    assert all(set(d) == {"id", "category", "severity", "location", "fix"} for d in result.verification.defects)
+    # Sanitised, and now carrying the lens that emitted each one.
+    assert all(
+        set(d) == {"id", "category", "severity", "location", "fix", "lens"}
+        for d in result.verification.defects
+    )
 
 
 def test_real_pipeline_failing_gate_reaches_unverified(tmp_path: Path) -> None:

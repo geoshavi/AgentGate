@@ -20,9 +20,17 @@ partial code is worse than no verdict because it looks like one.
 **Defect sanitising.** ``enforce_critic_schema`` rejects *missing* defect keys
 but not *extra* ones, so a defect dict can legally arrive carrying fields the
 schema never described -- including model prose. Everything this module stores
-or renders back to the agent is filtered to ``rubric.DEFECT_KEYS`` first. This
+or renders back to the agent is filtered to ``DEFECT_REPORT_KEYS`` first. This
 does not change any verdict: the severities ``verdict.gate`` saw are the ones it
 was given, and filtering happens strictly downstream of the decision.
+
+That allowlist is the schema's keys plus ``lens``, the tag ``judge.py`` puts on
+every defect naming the reviewer that produced it. A defect's ``category`` is
+the model's claim about its own finding and nothing enforces that the two agree
+-- ``schema.py`` documents lenses emitting off-lens categories -- so dropping
+the lens left a report in which a security-lens defect labelled CORRECTNESS was
+indistinguishable from a correctness-lens one. Two live D4 runs were diagnosed
+against the wrong lens on exactly that ambiguity.
 
 The repair loop is verification-*driven*: it runs only on real defects from a
 verdict that actually happened. When verification could not run -- oversized
@@ -53,6 +61,16 @@ from engine.verification.rubric import DEFECT_KEYS
 
 OK = "OK"
 UNVERIFIED = "UNVERIFIED"
+
+# What may survive into a report or an agent-facing message: the five keys the
+# defect schema defines, plus the lens that emitted the defect.
+#
+# Deliberately NOT folded into ``rubric.DEFECT_KEYS``. That set is what
+# ``enforce_critic_schema`` reads as the keys a model is *required* to supply,
+# and a lens's identity is not something to ask the model for -- it is recorded
+# by the code that made the call. Widening DEFECT_KEYS would make every critic
+# response missing "lens" a schema error, which fails closed to UNVERIFIED.
+DEFECT_REPORT_KEYS: frozenset[str] = DEFECT_KEYS | {"lens"}
 
 # Mirrors the per-file header read_code_snapshot writes:
 # f"# --- {relative} ---\n{content}", joined by a blank line.
@@ -131,15 +149,19 @@ class VerificationOutcome:
 
 
 def sanitize_defects(defects: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep only the five keys the defect schema defines.
+    """Keep only the schema's keys and the emitting lens.
 
     Strictly downstream of ``verdict.gate``: the verdict was already decided
     from the severities as supplied. This governs what the agent is shown and
     what the report stores, and exists because the schema permits extra keys
     that could carry model prose.
+
+    ``lens`` is copied when present and never invented when absent -- defects
+    from the automated gates have no lens, and fabricating one would attribute
+    ruff to a judge.
     """
     return [
-        {key: defect[key] for key in sorted(DEFECT_KEYS) if key in defect}
+        {key: defect[key] for key in sorted(DEFECT_REPORT_KEYS) if key in defect}
         for defect in defects
         if isinstance(defect, dict)
     ]

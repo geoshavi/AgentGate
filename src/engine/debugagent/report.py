@@ -381,8 +381,14 @@ def render_debug_report(report: DebugReport) -> str:
         if not entry["passed"]:
             lines.append(f"  gate    {entry['gate']} FAILED")
     for defect in gate.defects:
+        # The lens is named when there is one so a reader can tell which
+        # reviewer blocked the run: the category beside it is the model's claim
+        # about its own finding, and the two are not required to agree. Defects
+        # from the automated gates carry no lens and get no "via" clause.
+        lens = defect.get("lens")
         lines.append(
-            f"  defect  [{defect.get('category')}/{defect.get('severity')}] "
+            f"  defect  [{defect.get('category')}/{defect.get('severity')}"
+            f"{f' via {lens}' if lens else ''}] "
             f"{defect.get('location')}: {defect.get('fix')}"
         )
     for error in gate.schema_errors:

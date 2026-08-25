@@ -148,7 +148,7 @@ def provider(
     fix_turns: list[str],
     *,
     diagnosis_turns: list[str] | None = None,
-    judge_rounds: list[str] | None = None,
+    judge_rounds: list[str | dict[str, str]] | None = None,
     raise_on_judge: bool = False,
 ) -> DebugScenarioProvider:
     return DebugScenarioProvider(
@@ -165,7 +165,7 @@ def go(
     fix_turns: list[str],
     *,
     diagnosis_turns: list[str] | None = None,
-    judge_rounds: list[str] | None = None,
+    judge_rounds: list[str | dict[str, str]] | None = None,
     raise_on_judge: bool = False,
     repro: list[str] | None = None,
     suite: list[str] | None = None,
@@ -398,8 +398,67 @@ def test_agentgate_defects_reach_the_report(tmp_path: Path) -> None:
     defects = result.report.agentgate.defects
     assert len(defects) == len(LENSES)  # one per lens, all three agreed
     assert defects[0]["location"] == "cart.py:22"
-    # Sanitised on the way through: only the five schema keys survive.
+    # Sanitised on the way through: model prose never survives.
     assert "reasoning" not in defects[0]
+
+
+# -- lens attribution --------------------------------------------------------
+
+# The case two live D4 runs actually hit: the correctness lens passed, and the
+# single blocking defect came from the *security* lens, which labelled its own
+# finding CORRECTNESS. Read from the report alone -- before the lens survived
+# sanitising -- that is indistinguishable from a correctness-lens block, and it
+# sent a forensic investigation after the wrong lens twice.
+OFF_LENS_DEFECT = critic(
+    [
+        {
+            "id": "C1",
+            "category": "CORRECTNESS",
+            "severity": "HIGH",
+            "location": "cart.py:_discount",
+            "fix": "Guard min(item.price for item in items) against an empty items list.",
+        }
+    ]
+)
+OFF_LENS_ROUND: list[str | dict[str, str]] = [
+    {"correctness": CLEAN_CRITIC, "security": OFF_LENS_DEFECT, "code-quality": CLEAN_CRITIC}
+]
+
+
+def test_a_blocking_defect_records_the_lens_that_emitted_it(tmp_path: Path) -> None:
+    result, fake = go(tmp_path, SOLVE_TURNS, judge_rounds=OFF_LENS_ROUND)
+
+    report = result.report
+    # The fix is proven and every automated gate is green; the block is one
+    # judge's opinion, and the report must say whose.
+    assert report.observed.proof_status == ProofStatus.PROVEN.value
+    assert report.status == SessionStatus.UNVERIFIED.value
+    assert report.agentgate.status == "UNVERIFIED"
+    assert result.exit_code == EXIT_UNVERIFIED
+    assert fake.judge_calls == len(LENSES)
+
+    defects = report.agentgate.defects
+    assert len(defects) == 1
+    assert defects[0]["severity"] == "HIGH"
+    # The model's claim about itself, and the ground truth of who said it.
+    assert defects[0]["category"] == "CORRECTNESS"
+    assert defects[0]["lens"] == "security"
+
+
+def test_the_rendered_report_names_the_lens_behind_a_defect(tmp_path: Path) -> None:
+    result, _ = go(tmp_path, SOLVE_TURNS, judge_rounds=OFF_LENS_ROUND)
+
+    rendered = render_debug_report(result.report)
+
+    assert "[CORRECTNESS/HIGH via security]" in rendered
+
+
+def test_lens_attribution_survives_the_report_json(tmp_path: Path) -> None:
+    result, _ = go(tmp_path, SOLVE_TURNS, judge_rounds=OFF_LENS_ROUND)
+
+    restored = json.loads(result.report.to_json())
+
+    assert restored["agentgate"]["defects"][0]["lens"] == "security"
 
 
 # -- fail closed -------------------------------------------------------------

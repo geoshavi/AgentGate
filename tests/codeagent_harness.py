@@ -16,6 +16,7 @@ reaches a network, a provider SDK, or an API key.
 import json
 
 from engine.llm_types import GenerationResult, Message
+from engine.verification.judge import LENSES
 
 # Must exist in runtime/budget.py's PRICE_TABLE, or the budget controller
 # raises UnknownModelPricingError before any call is made.
@@ -111,6 +112,11 @@ def rootcause_block(**payload: object) -> str:
 DIAGNOSIS_MARKER = "You are diagnosing a reproduced software failure"
 FIX_MARKER = "You are a debugging agent"
 
+# Judge lens system prompt -> lens name, so a scenario can script one lens
+# differently from its neighbours in the same round. Inverted from LENSES
+# rather than restated, so a prompt edit cannot silently desynchronise the two.
+LENS_NAME_BY_PROMPT: dict[str, str] = {prompt: name for name, prompt in LENSES.items()}
+
 
 class DebugScenarioProvider:
     """One offline provider for a whole `engine debug` run.
@@ -121,8 +127,10 @@ class DebugScenarioProvider:
     than forked so both agents share one fake; the Coding Agent's planner stream
     has no counterpart here because the Debug Agent does not plan.
 
-    Judge responses are per verification round: all lenses of a round get the
-    same answer, and the round advances every len(lens_prompts) calls.
+    Judge responses are per verification round, and the round advances every
+    len(lens_prompts) calls. A round is either a single string -- every lens of
+    that round gets the same answer -- or a {lens name: response} mapping, which
+    is what lets a scenario reproduce the case where the three lenses disagree.
     """
 
     name = "debug-scenario"
@@ -132,7 +140,7 @@ class DebugScenarioProvider:
         *,
         diagnosis_turns: list[str],
         fix_turns: list[str],
-        judge_rounds: list[str] | None = None,
+        judge_rounds: list[str | dict[str, str]] | None = None,
         lens_prompts: tuple[str, ...] = (),
         raise_on_judge: bool = False,
     ) -> None:
@@ -169,7 +177,8 @@ class DebugScenarioProvider:
                 raise RuntimeError("judge exploded")
             lenses = max(1, len(self._lens_prompts))
             index = min((self.judge_calls - 1) // lenses, len(self._judge_rounds) - 1)
-            text = self._judge_rounds[index]
+            scripted = self._judge_rounds[index]
+            text = scripted if isinstance(scripted, str) else scripted[LENS_NAME_BY_PROMPT[system]]
         elif system is not None and DIAGNOSIS_MARKER in system:
             index = min(self.diagnosis_calls, len(self._diagnosis_turns) - 1)
             self.diagnosis_calls += 1
