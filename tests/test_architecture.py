@@ -87,6 +87,23 @@ alone:
           otherwise keep apart (e.g. an import of engine.state would hand
           providers/ a path to the database). Keeping it a stdlib-only leaf
           is what makes it safe for everyone to depend on.
+  Rule H: engine/capabilities/ must not import codeagent/ or debugagent/, and
+          must not reach providers/ or a provider SDK. The capability layer
+          (Agent Skills, and later test detection and external lookups) is a
+          leaf that trades in paths, strings and frozen dataclasses.
+
+          Two things depend on that. The first is reuse: a future Refactoring
+          Agent must be able to use the layer without importing another agent.
+          The second is a security property. The whole skills design rests on a
+          skill being *text that grants nothing* -- a SKILL.md may declare
+          `allowed-tools`, and AgentGate records it and honours it never. That
+          holds today because SkillLoader has no reference to a tool dict, a
+          Workspace or a CommandPolicy, and it cannot acquire one while this
+          rule stands. Without the rule, "a skill grants nothing" degrades from
+          a fact about the import graph into a promise about future edits.
+
+          The seam runs one way: codeagent/ may import capabilities/ (the tool
+          adapters do, from C2), never the reverse.
 """
 
 import ast
@@ -281,6 +298,58 @@ def test_rule_g_the_agent_seam_runs_one_way() -> None:
         "codeagent/ must never import debugagent/ -- the seam runs one way, which is "
         "what lets every Coding Agent test keep passing without knowing the Debug "
         "Agent exists:\n" + "\n".join(violations)
+    )
+
+
+def test_rule_h_capabilities_is_a_leaf() -> None:
+    """capabilities/ must not import codeagent/ or debugagent/.
+
+    This is what lets a future agent use the capability layer without another
+    agent on its import path, and it is also a security property rather than
+    only a tidiness one: a skill is text, and the whole layer rests on that text
+    never becoming authority. If capabilities/ could import codeagent, a later
+    edit could hand SkillLoader a CommandPolicy or a tool dict to consult, and
+    "a skill grants nothing" would become a promise instead of a fact about the
+    import graph.
+
+    The dependency runs one way: codeagent/ may import capabilities/ (the tool
+    adapters do, from C2), never the reverse.
+    """
+    violations = []
+    for path in _iter_source_files():
+        if not _is_in_package(path, "capabilities"):
+            continue
+        for name in _imported_module_names(path):
+            for agent in AGENT_PACKAGES:
+                if name == f"engine.{agent}" or name.startswith(f"engine.{agent}."):
+                    violations.append(f"{_relative(path)}: imports {name!r} (Rule H)")
+    assert not violations, (
+        "engine/capabilities/ must not import codeagent/ or debugagent/ -- it is a leaf, "
+        "which is what keeps a skill from ever reaching a policy object:\n" + "\n".join(violations)
+    )
+
+
+def test_rule_h_capabilities_does_not_reach_a_provider() -> None:
+    """Stated separately from Rules A/B so a failure names the capability layer.
+
+    capabilities/ has no reason to call a model at all: it reads files and
+    returns data. An SDK import here would mean something in the layer had grown
+    a model call, which is a design change, not an oversight.
+    """
+    violations = []
+    for path in _iter_source_files():
+        if not _is_in_package(path, "capabilities"):
+            continue
+        for name in _imported_module_names(path):
+            if name == "engine.providers" or name.startswith("engine.providers."):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule H)")
+            if name in PROVIDER_SDK_MODULES or any(
+                name.startswith(f"{sdk}.") for sdk in PROVIDER_SDK_MODULES
+            ):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule H)")
+    assert not violations, (
+        "engine/capabilities/ must not reach a provider or a provider SDK:\n"
+        + "\n".join(violations)
     )
 
 

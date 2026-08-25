@@ -7,6 +7,12 @@ dependencies = [
   "anthropic>=0.40.0",
   "python-dotenv>=1.0.1",
   "pydantic>=2.9.0",
+  # Agent Skills front matter is YAML by specification. Parsed with
+  # yaml.safe_load only -- never load/unsafe_load/full_load, and no custom
+  # constructor -- behind a size cap and a structural anchor/alias refusal.
+  # A hand-rolled reader was rejected: it would refuse valid skills that use
+  # folded scalars, which a 1024-char description makes routine.
+  "pyyaml>=6.0",
   "ruff>=0.7.0",
   "mypy>=1.13.0",
 ]
@@ -18,6 +24,9 @@ engine = "engine.cli:main"
 dev = [
   "pytest>=8.3.0",
   "pytest-mock>=3.14.0",
+  # Stubs for the runtime pyyaml dependency, so mypy keeps checking the one
+  # module that parses untrusted input instead of silently skipping it.
+  "types-PyYAML>=6.0",
 ]
 
 [build-system]
