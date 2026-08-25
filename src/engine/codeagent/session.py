@@ -427,6 +427,17 @@ class CodingSession:
             self._state.test_detection = environment.as_dict()
         self._ctx.testenv_log.clear()
 
+        # A distinct name from the capability loop above: the two carry different
+        # record types, and reusing one binding would let a future edit mix them.
+        for external in self._ctx.external_log:
+            self._state.external_events.append(asdict(external))
+            self._state.external_calls += 1
+            if external.error is None:
+                self._state.external_chars += external.chars
+            else:
+                self._state.external_failures.append(external.error)
+        self._ctx.external_log.clear()
+
     # -- bookkeeping --------------------------------------------------------
 
     def _set_phase(self, phase: Phase) -> None:

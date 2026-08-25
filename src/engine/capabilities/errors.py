@@ -27,4 +27,29 @@ class ManifestError(SkillError):
     """``SKILL.md`` front matter is missing, malformed, unsafe, or invalid."""
 
 
-__all__ = ["CapabilityError", "ManifestError", "SkillError", "SkillRootError"]
+class EgressDenied(CapabilityError):
+    """An external capability or operation is not admitted, or its budget is spent.
+
+    Raised by ``EgressPolicy.check`` and ``EgressLedger.begin_call`` -- always
+    *before* anything leaves the machine, so a refusal costs no round trip.
+    """
+
+
+class DocsUnavailable(CapabilityError):
+    """A documentation lookup produced nothing usable.
+
+    One class for every way that can happen -- bad input, a timeout, an
+    unparsable response, no matching library, a transport fault -- because the
+    caller's next move is the same in all of them: continue from repository
+    evidence. Distinguishing them would offer a choice nobody can act on.
+    """
+
+
+__all__ = [
+    "CapabilityError",
+    "DocsUnavailable",
+    "EgressDenied",
+    "ManifestError",
+    "SkillError",
+    "SkillRootError",
+]

@@ -19,7 +19,7 @@ from typing import Any, Protocol
 from engine.capabilities.testenv import TestEnvironment
 from engine.codeagent.limits import Limits
 from engine.codeagent.policy import CommandDenied, CommandPolicy
-from engine.codeagent.state import CapabilityEvent, CommandRun, ToolResult
+from engine.codeagent.state import CapabilityEvent, CommandRun, ExternalEvent, ToolResult
 from engine.codeagent.workspace import Workspace, WorkspaceError
 
 
@@ -56,6 +56,11 @@ class ToolContext:
     # disclosure event, and collapsing the two would mean one of them had to be
     # stringified to fit the other.
     testenv_log: list[TestEnvironment] = field(default_factory=list)
+    # External-capability calls, appended by tools/docs.py. A third sink beside
+    # command_log and capability_log because an external call is a different
+    # kind of fact from a local disclosure: it left the machine, it cost a budget
+    # nothing else spends, and it can fail in ways no local tool can.
+    external_log: list[ExternalEvent] = field(default_factory=list)
 
 
 class Tool(Protocol):

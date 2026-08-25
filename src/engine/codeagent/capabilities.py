@@ -25,6 +25,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from engine.capabilities.external import (
+    CONTEXT7_PROVIDER,
+    DOCS_LOOKUP,
+    DocsPort,
+    EgressLedger,
+    EgressPolicy,
+)
 from engine.capabilities.skills import (
     TRUST_BUILTIN,
     SkillBounds,
@@ -35,6 +42,7 @@ from engine.capabilities.skills import (
 )
 from engine.codeagent.state import TaskState
 from engine.codeagent.tools.base import Tool
+from engine.codeagent.tools.docs import LookupDocsTool
 from engine.codeagent.tools.skills import LoadSkillTool
 from engine.codeagent.tools.testenv import DetectTestsTool
 
@@ -56,6 +64,11 @@ class CapabilityBundle:
     tools: dict[str, Tool] = field(default_factory=dict)
     catalogue: str = ""
     registry: SkillRegistry | None = None
+    # External spend for this run. Held so a report can state what left the
+    # machine even when the session that spent it has ended. None when no
+    # external capability was admitted -- which is a different statement from
+    # "admitted and never used", and the report keeps them apart.
+    egress: EgressLedger | None = None
 
     @property
     def enabled(self) -> bool:
@@ -118,6 +131,9 @@ def build_capabilities(
     detect_tests: bool = False,
     include_builtin_skills: bool = False,
     workspace_root: Path | None = None,
+    docs: DocsPort | None = None,
+    egress_policy: EgressPolicy | None = None,
+    docs_capability: str = CONTEXT7_PROVIDER,
 ) -> CapabilityBundle:
     """Snapshot the roots, then build the tools. In that order, always.
 
@@ -162,7 +178,21 @@ def build_capabilities(
     if detect_tests:
         tools["detect_tests"] = DetectTestsTool()
 
-    return CapabilityBundle(tools=tools, catalogue=catalogue, registry=registry)
+    # External documentation is registered only when a port exists AND the policy
+    # admits the capability and operation. Absence is the safer interface: a
+    # disabled tool that always answers "unavailable" would still appear in the
+    # catalogue, and a model would spend turns discovering it cannot be used.
+    ledger: EgressLedger | None = None
+    policy = egress_policy or EgressPolicy.none()
+    if docs is not None and policy.admits(docs_capability, DOCS_LOOKUP):
+        ledger = EgressLedger()
+        tools["lookup_docs"] = LookupDocsTool(
+            docs, policy=policy, ledger=ledger, capability=docs_capability
+        )
+
+    return CapabilityBundle(
+        tools=tools, catalogue=catalogue, registry=registry, egress=ledger
+    )
 
 
 @contextmanager
@@ -223,8 +253,15 @@ def context_sources_from(states: Sequence[TaskState]) -> dict[str, Any]:
         (state.test_detection for state in reversed(states) if state.test_detection),
         None,
     )
+    external = {
+        "calls": sum(state.external_calls for state in states),
+        "chars": sum(state.external_chars for state in states),
+        "failures": [reason for state in states for reason in state.external_failures],
+        "events": [event for state in states for event in state.external_events],
+    }
     return {
         "test_detection": detection,
+        "external": external if external["events"] else None,
         "skills": {
             "advertised": list(final.advertised_skills),
             "loaded": [name for state in states for name in state.loaded_skills],

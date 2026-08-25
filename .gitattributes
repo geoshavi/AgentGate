@@ -1,0 +1,19 @@
+# Line endings.
+#
+# core.autocrlf is true on at least one development machine, which rewrites LF
+# to CRLF on checkout. For most sources that is harmless, but two trees are
+# content under test rather than code you edit, and a silent conversion there
+# changes what a test observes:
+#
+#   examples/          demo fixtures. tests/test_codeagent_newlines.py asserts a
+#                      fixture is LF before replaying an edit against it, because
+#                      the bug it guards against was an edit rewriting every line
+#                      ending in a file. A CRLF checkout makes that precondition
+#                      false and the guard unrunnable.
+#   skill_library/     authored instruction text whose bytes are digested at
+#                      snapshot. Stable endings keep a digest comparable across
+#                      machines.
+#
+# Pinned to LF so a checkout produces the bytes the repository actually holds.
+examples/** text eol=lf
+src/engine/skill_library/** text eol=lf

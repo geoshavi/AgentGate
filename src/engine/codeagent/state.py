@@ -147,6 +147,33 @@ class CapabilityEvent:
 
 
 @dataclass(frozen=True)
+class ExternalEvent:
+    """One external-capability call, or one refusal.
+
+    Records what was asked for and what was accepted -- never the response body.
+    ``chars`` is post-truncation, so it is the number of characters that actually
+    entered the model's context rather than the number the provider sent.
+
+    ``resolved_id`` is provenance a reader needs to judge the answer: which
+    library the provider actually matched. There is deliberately no field for a
+    server, a URL or a credential, because none of those is a thing this layer
+    should be able to write down.
+    """
+
+    provider: str
+    operation: str
+    library: str = ""
+    resolved_id: str = ""
+    chars: int = 0
+    truncated: bool = False
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+@dataclass(frozen=True)
 class TestRun:
     # pytest collects any class named Test*; this is a record, not a suite.
     # Not annotated, so dataclass does not treat it as a field.
@@ -236,6 +263,13 @@ class TaskState:
     # this dataclass is the serialized report, and keeping it free of imports
     # from the modules it describes is what lets any of them change without
     # breaking the report's shape. None means detection never ran.
+    # External capabilities (C6). Counts, provenance and refusal reasons only --
+    # a response body never reaches TaskState, which is what keeps a run record
+    # from becoming a copy of someone else's documentation.
+    external_calls: int = 0
+    external_chars: int = 0
+    external_failures: list[str] = field(default_factory=list)
+    external_events: list[dict[str, Any]] = field(default_factory=list)
     test_detection: dict[str, Any] | None = None
     verification_status: str | None = None
     verification_defects: list[dict[str, Any]] = field(default_factory=list)
