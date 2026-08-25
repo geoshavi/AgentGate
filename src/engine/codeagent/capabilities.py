@@ -21,13 +21,16 @@ field when it is real, not be anticipated by an abstraction now.
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from engine.capabilities.skills import (
+    TRUST_BUILTIN,
     SkillBounds,
     SkillLoader,
     SkillRegistry,
     SkillRoot,
+    builtin_skill_root,
 )
 from engine.codeagent.tools.base import Tool
 from engine.codeagent.tools.skills import LoadSkillTool
@@ -111,6 +114,8 @@ def build_capabilities(
     skill_roots: Sequence[SkillRoot] = (),
     bounds: SkillBounds | None = None,
     detect_tests: bool = False,
+    include_builtin_skills: bool = False,
+    workspace_root: Path | None = None,
 ) -> CapabilityBundle:
     """Snapshot the roots, then build the tools. In that order, always.
 
@@ -119,20 +124,32 @@ def build_capabilities(
     layer existed: no catalogue in the prompt, no tool in the registry, nothing
     in the report but empty lists.
 
-    ``detect_tests`` is **opt-in rather than automatic**, even though test
-    detection needs only the workspace and no configuration at all. Registering
-    it by default would add a tool to every run's catalogue, and the catalogue is
-    generated into the system prompt -- so every existing session's prompt would
-    change. That is exactly the regression C2 took care to make checkable, and
-    one explicit parameter is a cheaper way to keep it than a caveat.
+    ``detect_tests`` and ``include_builtin_skills`` are **opt-in rather than
+    automatic**, even though both are locally available and need no
+    configuration. Either one registers a tool, and the tool catalogue is
+    generated into the system prompt -- so switching them on by default would
+    change every existing session's prompt. That is exactly the regression C2
+    took care to make checkable, and two explicit parameters are a cheaper way to
+    keep it than a caveat.
+
+    ``include_builtin_skills`` prepends the engine's own ``skills/`` directory,
+    **first** in root order, so a first-party skill wins a name collision with an
+    operator-supplied one and the loser is recorded rather than silently
+    displaced. It goes through ``SkillRegistry.snapshot`` exactly like any other
+    root: there is deliberately no shortcut path for first-party content, because
+    a second loader would be a second set of bounds and a second place for the
+    snapshot ordering to be got wrong.
     """
     tools: dict[str, Tool] = {}
     catalogue = ""
     registry: SkillRegistry | None = None
 
-    if skill_roots:
+    roots = _ordered_roots(
+        skill_roots, include_builtin=include_builtin_skills, workspace_root=workspace_root
+    )
+    if roots:
         limits = bounds or SkillBounds()
-        registry = SkillRegistry.snapshot(skill_roots, bounds=limits)
+        registry = SkillRegistry.snapshot(roots, bounds=limits)
         tools.update(build_capability_tools(registry, bounds=limits))
         catalogue = registry.advertise()
 
@@ -140,6 +157,34 @@ def build_capabilities(
         tools["detect_tests"] = DetectTestsTool()
 
     return CapabilityBundle(tools=tools, catalogue=catalogue, registry=registry)
+
+
+def _ordered_roots(
+    operator_roots: Sequence[SkillRoot],
+    *,
+    include_builtin: bool,
+    workspace_root: Path | None,
+) -> list[SkillRoot]:
+    """Builtin first, then operator roots in the order they were declared.
+
+    The order is the whole of the shadowing rule: ``SkillRegistry.snapshot``
+    keeps the first package it sees for a given name, so putting the engine's own
+    root first is what stops an operator root quietly replacing a first-party
+    skill with something of the same name.
+
+    A missing builtin directory is not an error -- an installed wheel has no
+    repository root, and a run with no first-party skills is a valid run.
+    """
+    roots = list(operator_roots)
+    if not include_builtin:
+        return roots
+    path = builtin_skill_root()
+    if path is None:
+        return roots
+    builtin = SkillRoot.create(
+        path, trust_tier=TRUST_BUILTIN, workspace_root=workspace_root
+    )
+    return [builtin, *roots]
 
 
 __all__ = ["CapabilityBundle", "build_capabilities", "build_capability_tools"]

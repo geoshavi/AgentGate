@@ -29,6 +29,7 @@ from engine.capabilities.skills.roots import (
     TRUST_BUILTIN,
     TRUST_OPERATOR,
     SkillRoot,
+    builtin_skill_root,
     is_denied_name,
 )
 
@@ -49,6 +50,7 @@ __all__ = [
     "SkillPackage",
     "SkillRegistry",
     "SkillRoot",
+    "builtin_skill_root",
     "is_denied_name",
     "parse_manifest",
 ]

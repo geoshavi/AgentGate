@@ -126,6 +126,24 @@ class SkillRoot:
         return path.resolve().relative_to(self.path).as_posix()
 
 
+def builtin_skill_root() -> Path | None:
+    """The engine's own ``skills/`` directory, or None if it is not there.
+
+    Trusted by *provenance*: it ships with the code under review, so an operator
+    who ran this engine already accepted it. That is the only thing the tier
+    means -- admission is not durable, and this root is snapshotted exactly like
+    any other (see ``registry.py``).
+
+    Located relative to this file rather than the process's working directory,
+    because the working directory during a run is the *target workspace* and a
+    ``skills/`` folder there is not ours. Returns None rather than raising when
+    absent: an installed wheel has no repository root, and a run with no
+    first-party skills is a valid run, not a broken one.
+    """
+    candidate = Path(__file__).resolve().parents[4] / "skills"
+    return candidate if candidate.is_dir() else None
+
+
 def _overlaps(root: Path, workspace_root: Path | str | None) -> bool:
     """Whether this root lies inside the target workspace (or is it).
 
@@ -145,5 +163,6 @@ __all__ = [
     "TRUST_OPERATOR",
     "TRUST_TIERS",
     "SkillRoot",
+    "builtin_skill_root",
     "is_denied_name",
 ]

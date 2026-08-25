@@ -129,6 +129,7 @@ def run_coding_task(
     skill_roots: Sequence[SkillRoot] = (),
     skill_bounds: SkillBounds | None = None,
     detect_tests: bool = False,
+    include_builtin_skills: bool = False,
 ) -> CodeRunResult:
     """Run one task end to end and return its report and exit code.
 
@@ -145,7 +146,14 @@ def run_coding_task(
     # the workspace safe rather than merely permitted. No roots -- the default --
     # yields an empty bundle and today's behaviour exactly.
     capabilities = build_capabilities(
-        skill_roots=skill_roots, bounds=skill_bounds, detect_tests=detect_tests
+        skill_roots=skill_roots,
+        bounds=skill_bounds,
+        detect_tests=detect_tests,
+        include_builtin_skills=include_builtin_skills,
+        # So a first-party root that happens to sit inside the target workspace
+        # -- AgentGate debugging its own repository -- is recorded as overlapping
+        # rather than mistaken for an external one.
+        workspace_root=workspace.root,
     )
     session_id = task_id or f"cd-{uuid.uuid4().hex[:8]}"
 
