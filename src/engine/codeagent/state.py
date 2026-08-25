@@ -115,6 +115,38 @@ class CommandRun:
 
 
 @dataclass(frozen=True)
+class CapabilityEvent:
+    """One capability disclosure, or one refusal.
+
+    Records what entered context and where it came from -- never the content
+    itself. ``digest`` is the snapshot provenance of the served text, so a report
+    can state exactly which bytes the model was shown without storing them.
+
+    A refusal carries ``error`` and zero ``chars``; a duplicate carries
+    ``duplicate=True`` and zero ``chars``, because nothing new was disclosed.
+    Both still happened, and both cost the caller an ordinary tool call.
+    """
+
+    kind: str  # "skill"
+    name: str
+    reference: str | None = None
+    chars: int = 0
+    truncated: bool = False
+    duplicate: bool = False
+    error: str | None = None
+    digest: str = ""
+
+    @property
+    def key(self) -> str:
+        return self.name if self.reference is None else f"{self.name}/{self.reference}"
+
+    @property
+    def disclosed(self) -> bool:
+        """True when this event put new text into context."""
+        return self.error is None and not self.duplicate
+
+
+@dataclass(frozen=True)
 class TestRun:
     # pytest collects any class named Test*; this is a record, not a suite.
     # Not annotated, so dataclass does not treat it as a field.
@@ -184,6 +216,22 @@ class TaskState:
     planning_status: str | None = None
     planning_errors: list[str] = field(default_factory=list)
     # Placeholders, filled by P4 / P5. None means "not reached".
+    # Capabilities (C2). Skills are neither a measured fact about the program nor
+    # a claim by the model: they are an input that shaped the run, so they are
+    # recorded apart from both. Bodies are deliberately absent -- only names,
+    # counts and digests, because a report that stored skill text would grow the
+    # transcript this layer exists to bound.
+    advertised_skills: list[str] = field(default_factory=list)
+    loaded_skills: list[str] = field(default_factory=list)
+    loaded_skill_references: list[str] = field(default_factory=list)
+    skill_events: list[dict[str, Any]] = field(default_factory=list)
+    skill_chars: int = 0
+    skill_roots: list[dict[str, Any]] = field(default_factory=list)
+    skill_discovery_errors: list[str] = field(default_factory=list)
+    skill_shadowed: list[str] = field(default_factory=list)
+    # Derived from ``files_changed`` -- never from re-reading a skill file. See
+    # capabilities/skills/registry.py:mutations_from_ledger.
+    skill_source_mutations: list[str] = field(default_factory=list)
     verification_status: str | None = None
     verification_defects: list[dict[str, Any]] = field(default_factory=list)
     final_summary: str | None = None

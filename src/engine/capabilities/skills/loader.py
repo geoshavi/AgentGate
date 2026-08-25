@@ -42,6 +42,11 @@ class LoadedSkill:
     truncated: bool
     chars: int
     reference: str | None = None
+    duplicate: bool = False
+    """True when this content was already disclosed earlier in the session, so
+    ``body`` is a short note rather than the content. An explicit flag because
+    the alternative -- a caller matching on the note's wording -- would make a
+    prose edit a behaviour change."""
 
     @property
     def key(self) -> str:
@@ -61,6 +66,12 @@ class SkillLoader:
         self._bounds = bounds or registry.bounds
         self._loaded_skills: list[str] = []
         self._loaded_references: list[str] = []
+
+    @property
+    def registry(self) -> SkillRegistry:
+        """The snapshot this loader serves. Read-only, for provenance: a caller
+        reporting what was disclosed needs the digest that came with it."""
+        return self._registry
 
     @property
     def loaded_skills(self) -> tuple[str, ...]:
@@ -95,6 +106,7 @@ class SkillLoader:
                 body=f"skill {package.name!r} is already loaded in this session",
                 truncated=False,
                 chars=0,
+                duplicate=True,
             )
 
         if len(self._loaded_skills) >= self._bounds.max_loaded_skills:
@@ -132,6 +144,7 @@ class SkillLoader:
                 body=f"reference {key!r} is already loaded in this session",
                 truncated=False,
                 chars=0,
+                duplicate=True,
                 reference=reference,
             )
 

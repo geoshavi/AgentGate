@@ -153,14 +153,26 @@ def _parse_final(payload: dict[str, Any]) -> ParsedTurn:
 # makes a scripted offline test meaningful.
 
 
-def build_system_prompt(tools: dict[str, Tool]) -> str:
+def build_system_prompt(tools: dict[str, Tool], *, skills_catalogue: str = "") -> str:
     """Assemble the agent contract from the live registry.
 
     Generated rather than stored as a file so the advertised tool list cannot
     drift from the registered one -- a prompt naming a tool that no longer
     exists is a parse-error generator.
+
+    ``skills_catalogue`` is bounded metadata -- one line per advertised skill,
+    its name and when to use it -- and never a skill body: full instructions
+    enter context only through an explicit ``load_skill`` call. Defaulted to ""
+    so every existing caller produces a byte-identical prompt, which is what
+    makes "a run with no skills behaves exactly as before" checkable rather than
+    merely asserted.
     """
     catalogue = "\n".join(f"- {name}: {tools[name].description}" for name in sorted(tools))
+    skills = (
+        ""
+        if not skills_catalogue
+        else f"\n\nAvailable skills (call load_skill to read one in full):\n{skills_catalogue}"
+    )
     return f"""You are a coding agent working inside a fixed workspace.
 
 Work by calling exactly one tool per turn. End every message with exactly one
@@ -190,7 +202,7 @@ Rules:
 - A tool error is information, not a dead end: read it and adjust.
 
 Available tools:
-{catalogue}"""
+{catalogue}{skills}"""
 
 
 def render_task(task_text: str) -> str:

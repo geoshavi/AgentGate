@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from engine.codeagent.limits import DEFAULT_LIMITS, Limits
 from engine.codeagent.state import (
+    CapabilityEvent,
     CommandRun,
     Phase,
     SessionStatus,
@@ -152,7 +153,7 @@ def test_no_state_dataclass_has_a_reasoning_field() -> None:
     same grounds -- and only when it really is an int, so a later `str` field
     sneaking in under the name still fails.
     """
-    for cls in (TaskState, Usage, ToolCall, ToolResult, CommandRun, TestRun):
+    for cls in (TaskState, Usage, ToolCall, ToolResult, CommandRun, TestRun, CapabilityEvent):
         for f in fields(cls):
             if f.name.endswith("_tokens") and f.type in ("int", int):
                 continue
@@ -195,6 +196,19 @@ def test_serialized_state_exposes_only_observable_execution_data() -> None:
         "verification_defects",
         "final_summary",
         "stop_reason",
+        # Capabilities (C2). Every one of these is a name, a count, a flag or a
+        # digest -- there is deliberately no field that could hold a skill body,
+        # which would put authored instruction text into a run record and turn
+        # the report into the transcript this rule exists to prevent.
+        "advertised_skills",
+        "loaded_skills",
+        "loaded_skill_references",
+        "skill_events",
+        "skill_chars",
+        "skill_roots",
+        "skill_discovery_errors",
+        "skill_shadowed",
+        "skill_source_mutations",
     }
 
 

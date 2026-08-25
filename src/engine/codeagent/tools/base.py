@@ -18,7 +18,7 @@ from typing import Any, Protocol
 
 from engine.codeagent.limits import Limits
 from engine.codeagent.policy import CommandDenied, CommandPolicy
-from engine.codeagent.state import CommandRun, ToolResult
+from engine.codeagent.state import CapabilityEvent, CommandRun, ToolResult
 from engine.codeagent.workspace import Workspace, WorkspaceError
 
 
@@ -44,6 +44,12 @@ class ToolContext:
     # command never reaches here: the policy check raises before the record
     # exists, so this list means "ran", not "was asked for".
     command_log: list[CommandRun] = field(default_factory=list)
+    # Capability disclosures, appended by tools/skills.py and drained by the
+    # session into TaskState. The same sink pattern as command_log above, and
+    # for the same reason: ``Tool.run`` returns exactly one ToolResult, while a
+    # disclosure carries facts no ToolResult has room for -- which skill, which
+    # reference, how many characters, and the snapshot digest they came from.
+    capability_log: list[CapabilityEvent] = field(default_factory=list)
 
 
 class Tool(Protocol):

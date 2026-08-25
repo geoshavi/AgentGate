@@ -45,6 +45,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from engine.codeagent.capabilities import CapabilityBundle
 from engine.codeagent.limits import DEFAULT_LIMITS, Limits
 from engine.codeagent.log import SessionLog
 from engine.codeagent.plan import PlanOutcome
@@ -360,6 +361,7 @@ def run_verified_session(
     log: SessionLog | None = None,
     clock: Callable[[], float] = time.monotonic,
     planning: PlanOutcome | None = None,
+    capabilities: CapabilityBundle | None = None,
     verifier: Callable[..., tuple[str, dict, list[VerificationResult]]] = run_verification,
 ) -> VerifiedRun:
     """Run the agent, verify its work, and repair against real defects.
@@ -393,6 +395,7 @@ def run_verified_session(
         log=sink,
         clock=clock,
         planning=planning,
+        capabilities=capabilities,
     )
     state = session.run()
     states.append(state)
@@ -440,6 +443,10 @@ def run_verified_session(
             log=sink,
             clock=clock,
             planning=planning,
+            # The same bundle instance, so max_loaded_skills is spent across the
+            # run rather than granted afresh to each repair -- the rule turns,
+            # time and budget already follow.
+            capabilities=capabilities,
             repair_feedback=render_repair_feedback(outcome),
         )
         state = repair_session.run()

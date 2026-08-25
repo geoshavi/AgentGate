@@ -25,8 +25,10 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 
 from engine.codeagent import protocol
+from engine.codeagent.capabilities import CapabilityBundle
 from engine.codeagent.limits import DEFAULT_LIMITS, Limits
 from engine.codeagent.log import SessionLog
 from engine.codeagent.plan import PlanOutcome, render_plan_context
@@ -83,6 +85,7 @@ class CodingSession:
         repair_feedback: str | None = None,
         system_prompt: str | None = None,
         agent_name: str = AGENT_NAME,
+        capabilities: CapabilityBundle | None = None,
     ) -> None:
         self._task_text = task_text
         # Two injection points, both defaulting to the Coding Agent's own
@@ -102,6 +105,13 @@ class CodingSession:
         self._conn = conn
         self._limits = limits
         self._tools = TOOL_REGISTRY if tools is None else tools
+        # Capability tools are merged on top of whatever base set the caller
+        # chose, so the Debug Agent's bespoke fix-tool dict (C5) composes the
+        # same way the Coding Agent's registry does. An empty bundle merges
+        # nothing, which is what keeps a no-skills run byte-identical.
+        self._capabilities = capabilities
+        if capabilities is not None and capabilities.tools:
+            self._tools = {**self._tools, **capabilities.tools}
         self._log = log if log is not None else SessionLog()
         # Injected so the wall-clock bound is testable without sleeping. Used
         # for the deadline and for tool durations, nowhere else.
@@ -119,6 +129,14 @@ class CodingSession:
             workspace=str(workspace.root),
             limits=limits.as_dict(),
         )
+        if capabilities is not None:
+            # Static provenance, recorded once: which skills were offered, from
+            # which roots, and what discovery refused. Names and flags only --
+            # a skill body never reaches TaskState.
+            self._state.advertised_skills = list(capabilities.advertised)
+            self._state.skill_roots = capabilities.roots_as_dicts()
+            self._state.skill_discovery_errors = capabilities.discovery_errors()
+            self._state.skill_shadowed = capabilities.shadowed_names()
         if planning is not None:
             # Recorded whether or not it succeeded. A session that ran without a
             # plan says so in its own report rather than looking like one that
@@ -155,7 +173,10 @@ class CodingSession:
         self._set_phase(Phase.EXPLORING)
 
         system = (
-            protocol.build_system_prompt(self._tools)
+            protocol.build_system_prompt(
+                self._tools,
+                skills_catalogue="" if self._capabilities is None else self._capabilities.catalogue,
+            )
             if self._system_prompt is None
             else self._system_prompt
         )
@@ -337,6 +358,7 @@ class CodingSession:
 
         self._state.record_tool(call, result, duration_ms=duration_ms)
         self._drain_commands(call)
+        self._drain_capabilities()
         self._log.emit(
             "tool_call",
             turn,
@@ -374,6 +396,30 @@ class CodingSession:
             )
         self._ctx.command_log.clear()
 
+    def _drain_capabilities(self) -> None:
+        """Move capability disclosures into the report's record.
+
+        Mechanical, exactly like ``_drain_commands``: no decision is made here,
+        no status can change, and nothing branches on what was drained. A
+        disclosure is an input that shaped the run, so it is recorded beside the
+        command ledger rather than mixed into it.
+
+        Only ``disclosed`` events add to the loaded lists and the character
+        total. A refusal and a duplicate are both recorded as events -- they
+        happened, and each cost an ordinary tool call -- but neither put new text
+        into context, so counting them would overstate what the model was shown.
+        """
+        for event in self._ctx.capability_log:
+            self._state.skill_events.append(asdict(event))
+            if not event.disclosed:
+                continue
+            self._state.skill_chars += event.chars
+            if event.reference is None:
+                self._state.loaded_skills.append(event.name)
+            else:
+                self._state.loaded_skill_references.append(event.key)
+        self._ctx.capability_log.clear()
+
     # -- bookkeeping --------------------------------------------------------
 
     def _set_phase(self, phase: Phase) -> None:
@@ -396,6 +442,16 @@ class CodingSession:
         # happened; the other is an assertion.
         state.files_changed = self._workspace.changed_files
         state.files_inspected = self._workspace.inspected_files
+        # Reporting only: which recorded writes landed inside a skill root. Read
+        # from the ledger that already exists, never by re-reading a skill file
+        # -- a read here would be exactly the lazily-trusted channel the snapshot
+        # exists to close. Nothing downstream branches on this.
+        if self._capabilities is not None and self._capabilities.registry is not None:
+            state.skill_source_mutations = list(
+                self._capabilities.registry.mutations_from_ledger(
+                    state.files_changed, workspace_root=self._workspace.root
+                )
+            )
         self._sync_usage()
 
         previous = state.status

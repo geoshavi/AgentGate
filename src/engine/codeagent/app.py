@@ -26,10 +26,13 @@ reachable only when AgentGate returned OK.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from engine.capabilities.skills import SkillBounds, SkillRoot
+from engine.codeagent.capabilities import build_capabilities
 from engine.codeagent.limits import DEFAULT_LIMITS, Limits
 from engine.codeagent.log import SessionLog
 from engine.codeagent.plan import PlanOutcome, make_plan
@@ -123,6 +126,8 @@ def run_coding_task(
     task_id: str | None = None,
     artifacts_root: Path | None = None,
     db_path: Path | None = None,
+    skill_roots: Sequence[SkillRoot] = (),
+    skill_bounds: SkillBounds | None = None,
 ) -> CodeRunResult:
     """Run one task end to end and return its report and exit code.
 
@@ -132,6 +137,13 @@ def run_coding_task(
     this function returns a report in all of those cases instead of raising.
     """
     workspace = validate_workspace(workspace_path, max_files_changed=limits.max_files_changed)
+    # Capabilities are assembled here, before anything that can edit exists:
+    # build_capabilities snapshots every skill root and only then builds the
+    # tools that serve them. A mutating tool object therefore cannot be created
+    # before the skill content was read, which is what makes a skill root inside
+    # the workspace safe rather than merely permitted. No roots -- the default --
+    # yields an empty bundle and today's behaviour exactly.
+    capabilities = build_capabilities(skill_roots=skill_roots, bounds=skill_bounds)
     session_id = task_id or f"cd-{uuid.uuid4().hex[:8]}"
 
     artifacts_dir: Path | None = None
@@ -148,7 +160,7 @@ def run_coding_task(
     if db_path is None:
         run = _execute(
             task_text, workspace, gateway, budget, model, judge_model, session_id,
-            limits, policy, log, run_id=None, conn=None,
+            limits, policy, log, run_id=None, conn=None, capabilities=capabilities,
         )
     else:
         # Same tables engine run already writes: one row in `runs`, and one row
@@ -158,7 +170,7 @@ def run_coding_task(
             run_id = db.create_run(conn, task_text, provider_name, model)
             run = _execute(
                 task_text, workspace, gateway, budget, model, judge_model, session_id,
-                limits, policy, log, run_id=run_id, conn=conn,
+                limits, policy, log, run_id=run_id, conn=conn, capabilities=capabilities,
             )
             db.finish_run(
                 conn,
@@ -185,7 +197,7 @@ def run_coding_task(
 
 def _execute(
     task_text, workspace, gateway, budget, model, judge_model, session_id,
-    limits, policy, log, *, run_id, conn,
+    limits, policy, log, *, run_id, conn, capabilities=None,
 ):  # type: ignore[no-untyped-def]
     planning = _plan(
         task_text, workspace, gateway, budget, model, session_id, limits, policy, log, run_id, conn
@@ -204,6 +216,7 @@ def _execute(
         policy=policy,
         log=log,
         planning=planning,
+        capabilities=capabilities,
     )
 
 
