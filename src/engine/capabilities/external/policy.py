@@ -146,7 +146,7 @@ class EgressLedger:
         """
         if self._calls >= capability.max_calls:
             raise EgressDenied(
-                f"documentation lookup budget exhausted "
+                f"external capability budget exhausted "
                 f"({capability.max_calls} call(s) for {capability.name!r})"
             )
         allowance = min(capability.max_chars_per_call, capability.max_chars_total - self._chars)

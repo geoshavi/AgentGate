@@ -28,9 +28,12 @@ from typing import Any
 from engine.capabilities.external import (
     CONTEXT7_PROVIDER,
     DOCS_LOOKUP,
+    GITHUB_LOOKUP,
+    GITHUB_PROVIDER,
     DocsPort,
     EgressLedger,
     EgressPolicy,
+    GitHubPort,
 )
 from engine.capabilities.skills import (
     TRUST_BUILTIN,
@@ -43,6 +46,7 @@ from engine.capabilities.skills import (
 from engine.codeagent.state import TaskState
 from engine.codeagent.tools.base import Tool
 from engine.codeagent.tools.docs import LookupDocsTool
+from engine.codeagent.tools.github import LookupGitHubTool
 from engine.codeagent.tools.skills import LoadSkillTool
 from engine.codeagent.tools.testenv import DetectTestsTool
 
@@ -132,8 +136,10 @@ def build_capabilities(
     include_builtin_skills: bool = False,
     workspace_root: Path | None = None,
     docs: DocsPort | None = None,
+    github: GitHubPort | None = None,
     egress_policy: EgressPolicy | None = None,
     docs_capability: str = CONTEXT7_PROVIDER,
+    github_capability: str = GITHUB_PROVIDER,
 ) -> CapabilityBundle:
     """Snapshot the roots, then build the tools. In that order, always.
 
@@ -182,12 +188,28 @@ def build_capabilities(
     # admits the capability and operation. Absence is the safer interface: a
     # disabled tool that always answers "unavailable" would still appear in the
     # catalogue, and a model would spend turns discovering it cannot be used.
+    #
+    # One ledger, shared by every external capability admitted. External spend is
+    # a property of the session rather than of who answered, so a run that reads
+    # documentation and GitHub cannot take on more outside context than a run
+    # that reads either alone. It also keeps ``CapabilityBundle.egress`` a single
+    # number a report can state without knowing which providers existed.
     ledger: EgressLedger | None = None
     policy = egress_policy or EgressPolicy.none()
     if docs is not None and policy.admits(docs_capability, DOCS_LOOKUP):
-        ledger = EgressLedger()
+        ledger = ledger or EgressLedger()
         tools["lookup_docs"] = LookupDocsTool(
             docs, policy=policy, ledger=ledger, capability=docs_capability
+        )
+
+    # Read-only GitHub context, on exactly the same terms. The port has no write
+    # verb and the provider tool table admits only documented read tools, so
+    # "read-only" is a property of what this tool can express rather than a rule
+    # applied to what a model asks for.
+    if github is not None and policy.admits(github_capability, GITHUB_LOOKUP):
+        ledger = ledger or EgressLedger()
+        tools["lookup_github"] = LookupGitHubTool(
+            github, policy=policy, ledger=ledger, capability=github_capability
         )
 
     return CapabilityBundle(

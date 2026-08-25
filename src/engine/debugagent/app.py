@@ -147,6 +147,7 @@ def run_debug_task(
         detect_tests=detect_tests,
         include_builtin_skills=include_builtin_skills,
         docs=external.docs,
+        github=external.github,
         egress_policy=external.policy,
         workspace_root=workspace.root,
     )

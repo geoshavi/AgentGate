@@ -45,10 +45,23 @@ class DocsUnavailable(CapabilityError):
     """
 
 
+class GitHubUnavailable(CapabilityError):
+    """A GitHub lookup produced nothing usable.
+
+    The sibling of ``DocsUnavailable`` and for the same reason: bad input, a
+    repository outside the configured allowlist, a timeout, an unparsable
+    response and a transport fault are one thing to the caller, whose next move
+    in every case is to continue from repository evidence. Separate from
+    ``DocsUnavailable`` only so a caller holding both capabilities can tell which
+    one declined.
+    """
+
+
 __all__ = [
     "CapabilityError",
     "DocsUnavailable",
     "EgressDenied",
+    "GitHubUnavailable",
     "ManifestError",
     "SkillError",
     "SkillRootError",

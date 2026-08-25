@@ -160,6 +160,7 @@ def run_coding_task(
         detect_tests=detect_tests,
         include_builtin_skills=include_builtin_skills,
         docs=external.docs,
+        github=external.github,
         egress_policy=external.policy,
         # So a first-party root that happens to sit inside the target workspace
         # -- AgentGate debugging its own repository -- is recorded as overlapping
