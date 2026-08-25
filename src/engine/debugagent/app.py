@@ -38,11 +38,12 @@ proven fix, the run reports UNVERIFIED with the defects attached.
 import sqlite3
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from engine.capabilities.skills import SkillBounds, SkillRoot
 from engine.codeagent.app import (
     EXIT_ERROR,
     EXIT_UNVERIFIED,
@@ -51,6 +52,7 @@ from engine.codeagent.app import (
     exit_code_for,
     validate_workspace,
 )
+from engine.codeagent.capabilities import CapabilityBundle, build_capabilities
 from engine.codeagent.limits import Limits
 from engine.codeagent.log import SessionLog
 from engine.codeagent.policy import DEFAULT_POLICY, CommandPolicy
@@ -104,6 +106,10 @@ def run_debug_task(
     artifacts_root: Path | None = None,
     db_path: Path | None = None,
     clock: Callable[[], float] = time.monotonic,
+    skill_roots: Sequence[SkillRoot] = (),
+    skill_bounds: SkillBounds | None = None,
+    detect_tests: bool = False,
+    include_builtin_skills: bool = False,
 ) -> DebugRunResult:
     """Debug one reported failure end to end.
 
@@ -121,6 +127,20 @@ def run_debug_task(
     # command that could never run must be refused before an edit exists, not
     # discovered after one.
     suite = freeze_suite(suite_argv, policy)
+
+    # Capabilities are assembled AFTER both commands are frozen and before any
+    # model call. The order is the whole of the guarantee: by the time a skill or
+    # a detection exists, the two commands this run will be judged by are already
+    # immutable, so there is no point at which either could be reached. The
+    # snapshot itself happens inside build_capabilities, before any tool object
+    # that could edit the workspace is constructed.
+    capabilities = build_capabilities(
+        skill_roots=skill_roots,
+        bounds=skill_bounds,
+        detect_tests=detect_tests,
+        include_builtin_skills=include_builtin_skills,
+        workspace_root=workspace.root,
+    )
 
     session_id = task_id or f"dbg-{uuid.uuid4().hex[:8]}"
     artifacts_dir: Path | None = None
@@ -149,6 +169,7 @@ def run_debug_task(
             clock=clock,
             run_id=None,
             conn=None,
+            capabilities=capabilities,
         )
     else:
         # The same tables `engine code` writes: one row in `runs`, one row per
@@ -172,6 +193,7 @@ def run_debug_task(
                 clock=clock,
                 run_id=run_id,
                 conn=conn,
+                capabilities=capabilities,
             )
             db.finish_run(
                 conn,
@@ -216,6 +238,7 @@ def _execute(
     clock: Callable[[], float],
     run_id: int | None,
     conn: sqlite3.Connection | None,
+    capabilities: CapabilityBundle | None = None,
 ) -> DebugRun:
     """The control flow. Every early return is a refusal with zero edits after it."""
     started = clock()
@@ -311,6 +334,11 @@ def _execute(
         limits=limits,
         policy=policy,
         log=log,
+        # Diagnosis (D2) deliberately does NOT receive these: it is a single
+        # bounded evidence-first call with no tool loop, so a catalogue there
+        # would inflate every diagnosis prompt for a capability the phase
+        # cannot use.
+        capabilities=capabilities,
     )
     if fix.status is ProofStatus.ABORTED:
         return finish(

@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from engine.codeagent.capabilities import context_sources_from
 from engine.codeagent.state import SessionStatus, TaskState
 from engine.codeagent.verify import VerifiedRun
 
@@ -104,56 +105,6 @@ class FinalReport:
         return json.dumps(self.to_dict(), indent=indent, default=str)
 
 
-def _context_sources(run: VerifiedRun) -> dict[str, Any]:
-    """What entered the model's context besides the workspace and its own turns.
-
-    Names, counts and digests -- never content. A skill body is bounded on the
-    way into context precisely so it does not have to be bounded again on the way
-    into a report, and storing it here would turn a run record into a transcript.
-
-    ``digests`` maps each disclosed key (``skill`` or ``skill/reference``) to the
-    sha256 of the source as read at snapshot, which is what lets a reader say
-    exactly which bytes the model saw even when the file on disk has since
-    changed. That case is real: a skill root may sit inside the workspace.
-
-    Static fields come from the final state -- discovery happened once, so every
-    round carries the same values -- while events accumulate across rounds, the
-    way commands_run already does.
-    """
-    final = run.final_state
-    events = [event for state in run.states for event in state.skill_events]
-    # The last round that detected anything wins: detection is an observation of
-    # the workspace as it then stood, and a repair round re-running it is a fresh
-    # answer rather than a second opinion. None throughout means it never ran.
-    detection = next(
-        (state.test_detection for state in reversed(run.states) if state.test_detection),
-        None,
-    )
-    return {
-        "test_detection": detection,
-        "skills": {
-            "advertised": list(final.advertised_skills),
-            "loaded": [name for state in run.states for name in state.loaded_skills],
-            "references": [
-                key for state in run.states for key in state.loaded_skill_references
-            ],
-            "chars": sum(state.skill_chars for state in run.states),
-            "events": events,
-            "errors": list(final.skill_discovery_errors),
-            "shadowed": list(final.skill_shadowed),
-            "roots": list(final.skill_roots),
-            "mutations": list(final.skill_source_mutations),
-            "digests": {
-                event["name"]
-                if event["reference"] is None
-                else f"{event['name']}/{event['reference']}": event["digest"]
-                for event in events
-                if event["digest"]
-            },
-        }
-    }
-
-
 def build_report(run: VerifiedRun) -> FinalReport:
     final = run.final_state
     outcome = run.verification
@@ -183,7 +134,7 @@ def build_report(run: VerifiedRun) -> FinalReport:
         files_inspected=list(final.files_inspected),
         commands_run=[asdict(command) for state in run.states for command in state.commands_run],
         test_results=[asdict(test) for state in run.states for test in state.test_results],
-        context_sources=_context_sources(run),
+        context_sources=context_sources_from(run.states),
         plan=final.plan,
         planning_status=final.planning_status,
         planning_attempts=final.usage.planning_attempts,

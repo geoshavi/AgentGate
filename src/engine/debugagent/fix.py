@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from engine.codeagent.capabilities import CapabilityBundle, context_sources_from
 from engine.codeagent.limits import Limits
 from engine.codeagent.log import SessionLog
 from engine.codeagent.policy import DEFAULT_POLICY, CommandPolicy
@@ -84,9 +85,27 @@ class ProofStatus(str, Enum):
     ABORTED = "ABORTED"
 
 
-def build_fix_tools(repro: FrozenRepro) -> dict[str, Tool]:
-    """The fix tool set, with run_repro bound to this run's frozen command."""
-    return {**_BASE_FIX_TOOLS, "run_repro": RunReproTool(repro)}
+def build_fix_tools(
+    repro: FrozenRepro, capabilities: CapabilityBundle | None = None
+) -> dict[str, Tool]:
+    """The fix tool set, with run_repro bound to this run's frozen command.
+
+    Capability tools merge on top, never underneath. The two absences that make
+    this set safe -- no ``run_command``, no ``write_file`` -- are absences, and a
+    capability cannot reintroduce one by being added. What a capability can add
+    is ``load_skill`` and ``detect_tests``: both read, neither runs anything, and
+    neither can reach the frozen commands.
+    """
+    tools = {**_BASE_FIX_TOOLS, "run_repro": RunReproTool(repro)}
+    if capabilities is not None:
+        tools.update(capabilities.tools)
+    return tools
+
+
+def fix_tool_names(capabilities: CapabilityBundle | None = None) -> tuple[str, ...]:
+    """What the fixing prompt should advertise, sorted for a stable prompt."""
+    extra = tuple(capabilities.tools) if capabilities is not None else ()
+    return tuple(sorted({*DEBUG_FIX_TOOLS, *extra}))
 
 
 @dataclass(frozen=True)
@@ -111,6 +130,11 @@ class FixOutcome:
     proof: ProofResult | None = None
     repairs_used: int = 0
     files_changed: list[str] = field(default_factory=list)
+    # What shaped the fixing session besides the workspace: skills disclosed,
+    # test detection observed. Names, counts and digests only -- never a skill
+    # body, a reference body, or a config file's contents. Advisory throughout:
+    # nothing here was consulted to decide what the proof gate ran.
+    context_sources: dict[str, Any] = field(default_factory=dict)
     commands_run: list[dict[str, Any]] = field(default_factory=list)
     tool_results: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: int = 0
@@ -136,6 +160,7 @@ class FixOutcome:
             "proof": None if self.proof is None else self.proof.as_dict(),
             "repairs_used": self.repairs_used,
             "files_changed": list(self.files_changed),
+            "context_sources": dict(self.context_sources),
             "commands_run": list(self.commands_run),
             "tool_results": list(self.tool_results),
             "tool_calls": self.tool_calls,
@@ -164,6 +189,7 @@ def run_fix_loop(
     limits: Limits = DEBUG_LIMITS,
     policy: CommandPolicy = DEFAULT_POLICY,
     log: SessionLog | None = None,
+    capabilities: CapabilityBundle | None = None,
 ) -> FixOutcome:
     """Apply the smallest fix for a validated root cause, then prove it.
 
@@ -182,8 +208,16 @@ def run_fix_loop(
     except (TypeError, ValueError) as exc:
         return _aborted(sink, root_cause, str(exc))
 
-    tools = build_fix_tools(repro)
-    system = build_fix_prompt(repro, suite)
+    # Capabilities are advisory context for the fixing session and nothing more.
+    # They are composed here, after both commands are already frozen, so there is
+    # no point at which a skill or a detection could reach either one.
+    tools = build_fix_tools(repro, capabilities)
+    system = build_fix_prompt(
+        repro,
+        suite,
+        tool_names=fix_tool_names(capabilities),
+        skills_catalogue="" if capabilities is None else capabilities.catalogue,
+    )
     brief = render_fix_brief(task_text, evidence, root_cause, repro, suite)
 
     states: list[TaskState] = []
@@ -208,6 +242,10 @@ def run_fix_loop(
             repair_feedback=feedback,
             system_prompt=system,
             agent_name=AGENT_NAME,
+            # The same bundle instance across repair rounds, so the disclosure
+            # budget is spent over the run rather than granted afresh to each --
+            # the rule turns, time and spend already follow.
+            capabilities=capabilities,
         )
         states.append(session.run())
 
@@ -296,13 +334,30 @@ def _check_prerequisites(
 # -- prompting --------------------------------------------------------------
 
 
-def build_fix_prompt(repro: FrozenRepro, suite: FrozenRepro) -> str:
+def build_fix_prompt(
+    repro: FrozenRepro,
+    suite: FrozenRepro,
+    *,
+    tool_names: tuple[str, ...] = DEBUG_FIX_TOOLS,
+    skills_catalogue: str = "",
+) -> str:
     """The fixing system prompt.
 
     Generated rather than stored, matching every other prompt in the codebase.
     It states the two commands verbatim so the model knows exactly what it will
     be judged by -- there is nothing to be gained by hiding the bar.
+
+    Both new arguments default to the pre-capability values, so a run without a
+    bundle produces a byte-identical prompt. The catalogue is bounded metadata;
+    a skill body enters context only through an explicit ``load_skill`` call,
+    exactly as in a coding session. Nothing a skill says can move the two
+    commands above -- they are frozen before this prompt exists.
     """
+    skills = (
+        ""
+        if not skills_catalogue
+        else "\n\nAvailable skills (call load_skill to read one in full):\n" + skills_catalogue
+    )
     return f"""You are a debugging agent. A failure has already been reproduced and
 diagnosed. Your job is to apply the SMALLEST change that fixes the stated root
 cause, and nothing else.
@@ -343,9 +398,7 @@ Rules:
 - A tool error is information, not a dead end: read it and adjust.
 
 Available tools:
-""" + "\n".join(
-        f"- {name}" for name in DEBUG_FIX_TOOLS
-    )
+""" + "\n".join(f"- {name}" for name in tool_names) + skills
 
 
 def render_fix_brief(
@@ -464,6 +517,7 @@ def _finish(
         repairs_used=repairs,
         # From the ledger, never from what any model said it changed.
         files_changed=workspace.changed_files,
+        context_sources=context_sources_from(states) if states else {},
         commands_run=commands,
         tool_results=tools,
         tool_calls=sum(state.usage.tool_calls for state in states),
@@ -495,6 +549,7 @@ __all__ = [
     "ProofStatus",
     "build_fix_prompt",
     "build_fix_tools",
+    "fix_tool_names",
     "render_fix_brief",
     "run_fix_loop",
 ]

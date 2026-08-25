@@ -33,6 +33,7 @@ from engine.capabilities.skills import (
     SkillRoot,
     builtin_skill_root,
 )
+from engine.codeagent.state import TaskState
 from engine.codeagent.tools.base import Tool
 from engine.codeagent.tools.skills import LoadSkillTool
 from engine.codeagent.tools.testenv import DetectTestsTool
@@ -192,4 +193,64 @@ def _builtin_root(
         yield SkillRoot.create(path, trust_tier=TRUST_BUILTIN, workspace_root=workspace_root)
 
 
-__all__ = ["CapabilityBundle", "build_capabilities", "build_capability_tools"]
+def context_sources_from(states: Sequence[TaskState]) -> dict[str, Any]:
+    """What entered the model's context besides the workspace and its own turns.
+
+    Names, counts and digests -- never content. A skill body is bounded on the
+    way into context precisely so it does not have to be bounded again on the way
+    into a report, and storing it here would turn a run record into a transcript.
+
+    ``digests`` maps each disclosed key (``skill`` or ``skill/reference``) to the
+    sha256 of the source as read at snapshot, which is what lets a reader say
+    exactly which bytes the model saw even when the file on disk has since
+    changed. That case is real: a skill root may sit inside the workspace.
+
+    Static fields come from the final state -- discovery happened once, so every
+    round carries the same values -- while events accumulate across rounds, the
+    way commands_run already does.
+
+    Shared by both agents rather than reimplemented per report: the Coding Agent
+    passes its verified run's states, the Debug Agent its fix session's, and the
+    shape a reader sees is the same in both. A second copy would drift the moment
+    one of them gained a field.
+    """
+    final = states[-1]
+    events = [event for state in states for event in state.skill_events]
+    # The last round that detected anything wins: detection is an observation of
+    # the workspace as it then stood, and a repair round re-running it is a fresh
+    # answer rather than a second opinion. None throughout means it never ran.
+    detection = next(
+        (state.test_detection for state in reversed(states) if state.test_detection),
+        None,
+    )
+    return {
+        "test_detection": detection,
+        "skills": {
+            "advertised": list(final.advertised_skills),
+            "loaded": [name for state in states for name in state.loaded_skills],
+            "references": [
+                key for state in states for key in state.loaded_skill_references
+            ],
+            "chars": sum(state.skill_chars for state in states),
+            "events": events,
+            "errors": list(final.skill_discovery_errors),
+            "shadowed": list(final.skill_shadowed),
+            "roots": list(final.skill_roots),
+            "mutations": list(final.skill_source_mutations),
+            "digests": {
+                event["name"]
+                if event["reference"] is None
+                else f"{event['name']}/{event['reference']}": event["digest"]
+                for event in events
+                if event["digest"]
+            },
+        }
+    }
+
+
+__all__ = [
+    "CapabilityBundle",
+    "build_capabilities",
+    "build_capability_tools",
+    "context_sources_from",
+]

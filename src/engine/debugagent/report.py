@@ -195,6 +195,14 @@ class DebugReport:
     claimed: ModelClaims
     agentgate: AgentGateResult
     usage: UsageTotals
+    # A fourth category, beside observed/claimed/agentgate: inputs that shaped
+    # the run. Not a measured fact about the program, not a model's assertion,
+    # not a verdict -- and never authority. In particular
+    # ``test_detection.suite_argv`` is what the workspace's configuration
+    # suggests, which is a different thing from ``suite_command`` above: that
+    # one is the frozen command the proof gate actually ran. Defaulted so a run
+    # assembled without capabilities produces the report it always did.
+    context_sources: dict[str, Any] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
@@ -254,6 +262,7 @@ def build_debug_report(run: DebugRun) -> DebugReport:
             fix_summary=fix.final_summary if fix is not None else "",
         ),
         agentgate=_agentgate(run.verification),
+        context_sources={} if run.fix is None else dict(run.fix.context_sources),
         usage=_usage(run),
     )
 
@@ -349,8 +358,8 @@ def render_debug_report(report: DebugReport) -> str:
 
     lines = [
         f"session   {report.task_id}    workspace {report.workspace}",
-        f"repro     {' '.join(report.repro_command)}",
-        f"suite     {' '.join(report.suite_command)}",
+        f"repro     {' '.join(report.repro_command)}   [frozen -- the proof gate ran this]",
+        f"suite     {' '.join(report.suite_command)}   [frozen -- the proof gate ran this]",
         "",
         "-- observed (commands, exit codes, ledger) --",
     ]
@@ -393,6 +402,24 @@ def render_debug_report(report: DebugReport) -> str:
         )
     for error in gate.schema_errors:
         lines.append(f"  schema  {error}")
+
+    detection = report.context_sources.get("test_detection")
+    skills = report.context_sources.get("skills") or {}
+    if detection or skills.get("advertised"):
+        lines += ["", "-- context sources (informational, not authority) --"]
+    if skills.get("advertised"):
+        lines.append(
+            f"skills    advertised {skills['advertised']}, loaded {skills['loaded']}"
+            f"   [{skills.get('chars', 0)} chars]"
+        )
+    if detection:
+        # Labelled "suggests" on purpose: a reader must never take this for the
+        # command the proof gate ran, which is the frozen one printed above.
+        lines.append(
+            f"detected  {detection['framework']} ({detection['confidence']}), "
+            f"executable {str(detection['executable']).lower()} "
+            f"-- suggests {detection['suite_argv']}, NOT run as proof"
+        )
 
     lines += ["", "-- claimed by the model (not evidence) --"]
     cause = report.claimed.root_cause
