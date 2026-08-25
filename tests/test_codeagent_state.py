@@ -209,6 +209,9 @@ def test_serialized_state_exposes_only_observable_execution_data() -> None:
         "skill_discovery_errors",
         "skill_shadowed",
         "skill_source_mutations",
+        # Test detection (C3): a structured result -- framework, confidence,
+        # evidence source names, argv. No configuration file contents.
+        "test_detection",
     }
 
 

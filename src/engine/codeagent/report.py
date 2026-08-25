@@ -122,7 +122,15 @@ def _context_sources(run: VerifiedRun) -> dict[str, Any]:
     """
     final = run.final_state
     events = [event for state in run.states for event in state.skill_events]
+    # The last round that detected anything wins: detection is an observation of
+    # the workspace as it then stood, and a repair round re-running it is a fresh
+    # answer rather than a second opinion. None throughout means it never ran.
+    detection = next(
+        (state.test_detection for state in reversed(run.states) if state.test_detection),
+        None,
+    )
     return {
+        "test_detection": detection,
         "skills": {
             "advertised": list(final.advertised_skills),
             "loaded": [name for state in run.states for name in state.loaded_skills],

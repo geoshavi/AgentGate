@@ -641,3 +641,181 @@ def test_a_run_without_capabilities_reports_empty_context_sources(tmp_path: Path
     assert skills["advertised"] == []
     assert skills["loaded"] == []
     assert skills["chars"] == 0
+
+
+# -- C3: test detection through the session -----------------------------------
+
+
+def detect_bundle(tmp_path: Path, *, skills: Path | None = None) -> CapabilityBundle:
+    roots = [SkillRoot.create(skills, trust_tier=TRUST_BUILTIN)] if skills else []
+    return build_capabilities(skill_roots=roots, detect_tests=True)
+
+
+def test_detect_tests_is_opt_in_and_absent_by_default(tmp_path: Path) -> None:
+    """Registering it automatically would change every existing run's system
+    prompt, which is exactly the regression C2 made checkable."""
+    assert build_capabilities().tools == {}
+    assert "detect_tests" not in build_capabilities(skill_roots=[]).tools
+
+
+def test_detect_tests_registers_without_any_skill_root(tmp_path: Path) -> None:
+    bundle = build_capabilities(detect_tests=True)
+
+    assert set(bundle.tools) == {"detect_tests"}
+    assert bundle.catalogue == ""
+    assert bundle.registry is None
+
+
+def test_load_skill_and_detect_tests_coexist(tmp_path: Path) -> None:
+    write_skill(tmp_path / "skills", "testing")
+
+    bundle = detect_bundle(tmp_path, skills=tmp_path / "skills")
+
+    assert set(bundle.tools) == {"load_skill", "detect_tests"}
+
+
+def test_detect_tests_reports_the_workspace_framework(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    bundle, ctx = detect_bundle(tmp_path), ctx_for(tmp_path)
+
+    result = bundle.tools["detect_tests"].run({}, ctx)
+
+    assert result.ok
+    assert "framework: pytest" in result.output
+    assert "confidence: CERTAIN" in result.output
+    assert "executable: true" in result.output
+
+
+def test_the_observation_carries_no_config_file_contents(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "pytest.ini").write_text("[pytest]\naddopts = SECRET_TOKEN_VALUE\n", encoding="utf-8")
+    bundle, ctx = detect_bundle(tmp_path), ctx_for(tmp_path)
+
+    result = bundle.tools["detect_tests"].run({}, ctx)
+
+    assert "SECRET_TOKEN_VALUE" not in result.output
+
+
+def test_a_js_workspace_is_reported_unrunnable_by_the_real_policy(tmp_path: Path) -> None:
+    """The blocked_reason is the live CommandPolicy's own words, not a constant."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "package.json").write_text('{"scripts": {"test": "jest"}}', encoding="utf-8")
+    bundle, ctx = detect_bundle(tmp_path), ctx_for(tmp_path)
+
+    result = bundle.tools["detect_tests"].run({}, ctx)
+
+    assert "framework: jest" in result.output
+    assert "executable: false" in result.output
+    assert "npm" in result.output
+    assert "not allowed" in result.output
+
+
+def test_the_policy_seam_delegates_to_command_policy(tmp_path: Path) -> None:
+    from engine.codeagent.policy import DEFAULT_POLICY
+    from engine.codeagent.tools.testenv import policy_permits
+
+    permits = policy_permits(DEFAULT_POLICY)
+
+    assert permits(("python", "-m", "pytest", "-q")) is None
+    assert permits(("npm", "test")) is not None
+    assert permits(()) is not None
+
+
+def test_detect_tests_records_the_result_on_the_context(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    bundle, ctx = detect_bundle(tmp_path), ctx_for(tmp_path)
+
+    bundle.tools["detect_tests"].run({}, ctx)
+
+    assert len(ctx.testenv_log) == 1
+    assert ctx.testenv_log[0].framework == "pytest"
+
+
+def test_detect_tests_runs_no_subprocess_and_writes_nothing(tmp_path: Path) -> None:
+    import subprocess
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    bundle, ctx = detect_bundle(tmp_path), ctx_for(tmp_path)
+    before = sorted(p.name for p in workspace.rglob("*"))
+    calls: list[object] = []
+    original = subprocess.run
+    subprocess.run = lambda *a, **k: calls.append(a)  # type: ignore[assignment]
+    try:
+        bundle.tools["detect_tests"].run({}, ctx)
+    finally:
+        subprocess.run = original  # type: ignore[assignment]
+
+    assert calls == []
+    assert sorted(p.name for p in workspace.rglob("*")) == before
+    assert ctx.workspace.changed_files == []
+
+
+def test_the_model_can_detect_tests_in_a_session(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+
+    state, provider = run_session(
+        tmp_path,
+        [tool_turn("detect_tests", {}), final_turn("done")],
+        bundle=build_capabilities(detect_tests=True),
+        workspace=workspace,
+    )
+
+    assert state.status is SessionStatus.COMPLETED_UNVERIFIED
+    assert "detect_tests" in (provider.seen_systems[0] or "")
+    assert state.usage.tool_calls == 1
+    assert state.test_detection is not None
+    assert state.test_detection["framework"] == "pytest"
+    assert state.test_detection["confidence"] == "CERTAIN"
+
+
+def test_a_session_that_never_detects_records_nothing(tmp_path: Path) -> None:
+    state, _ = run_session(tmp_path, [final_turn("done")], bundle=build_capabilities(detect_tests=True))
+
+    assert state.test_detection is None
+
+
+def test_test_detection_reaches_the_report(tmp_path: Path) -> None:
+    from engine.codeagent.report import build_report
+    from engine.codeagent.verify import VerifiedRun
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "pytest.ini").write_text("[pytest]\naddopts = SECRET_TOKEN_VALUE\n", encoding="utf-8")
+    state, _ = run_session(
+        tmp_path,
+        [tool_turn("detect_tests", {}), final_turn("done")],
+        bundle=build_capabilities(detect_tests=True),
+        workspace=workspace,
+    )
+    run = VerifiedRun(
+        status=SessionStatus.UNVERIFIED, agent_status=state.status, states=[state], verification=None
+    )
+
+    detection = build_report(run).context_sources["test_detection"]
+
+    assert detection["framework"] == "pytest"
+    assert detection["suite_argv"] == ["python", "-m", "pytest", "-q"]
+    assert detection["executable"] is True
+    assert "SECRET_TOKEN_VALUE" not in json.dumps(build_report(run).to_dict())
+
+
+def test_a_run_without_detection_reports_none(tmp_path: Path) -> None:
+    from engine.codeagent.report import build_report
+    from engine.codeagent.verify import VerifiedRun
+
+    state, _ = run_session(tmp_path, [final_turn("done")])
+    run = VerifiedRun(
+        status=SessionStatus.UNVERIFIED, agent_status=state.status, states=[state], verification=None
+    )
+
+    assert build_report(run).context_sources["test_detection"] is None

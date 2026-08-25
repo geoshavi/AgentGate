@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from engine.capabilities.testenv import TestEnvironment
 from engine.codeagent.limits import Limits
 from engine.codeagent.policy import CommandDenied, CommandPolicy
 from engine.codeagent.state import CapabilityEvent, CommandRun, ToolResult
@@ -50,6 +51,11 @@ class ToolContext:
     # disclosure carries facts no ToolResult has room for -- which skill, which
     # reference, how many characters, and the snapshot digest they came from.
     capability_log: list[CapabilityEvent] = field(default_factory=list)
+    # Test-detection results, appended by tools/testenv.py. A separate sink from
+    # capability_log because a detection is a structured value rather than a
+    # disclosure event, and collapsing the two would mean one of them had to be
+    # stringified to fit the other.
+    testenv_log: list[TestEnvironment] = field(default_factory=list)
 
 
 class Tool(Protocol):

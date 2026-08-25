@@ -128,6 +128,7 @@ def run_coding_task(
     db_path: Path | None = None,
     skill_roots: Sequence[SkillRoot] = (),
     skill_bounds: SkillBounds | None = None,
+    detect_tests: bool = False,
 ) -> CodeRunResult:
     """Run one task end to end and return its report and exit code.
 
@@ -143,7 +144,9 @@ def run_coding_task(
     # before the skill content was read, which is what makes a skill root inside
     # the workspace safe rather than merely permitted. No roots -- the default --
     # yields an empty bundle and today's behaviour exactly.
-    capabilities = build_capabilities(skill_roots=skill_roots, bounds=skill_bounds)
+    capabilities = build_capabilities(
+        skill_roots=skill_roots, bounds=skill_bounds, detect_tests=detect_tests
+    )
     session_id = task_id or f"cd-{uuid.uuid4().hex[:8]}"
 
     artifacts_dir: Path | None = None

@@ -131,6 +131,13 @@ class Limits:
     max_rootcause_validation_commands: int = 3
     rootcause_max_tokens: int = 1_500
 
+    # Capabilities (C3). Test detection reads configuration only, so these bound
+    # a small fixed candidate list rather than a repository walk. A truncated
+    # read can only fail to find a section, never invent one, so the bound
+    # degrades a CERTAIN verdict to UNKNOWN rather than to a wrong answer.
+    max_testenv_files_read: int = 8
+    max_testenv_file_bytes: int = 32_000
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))

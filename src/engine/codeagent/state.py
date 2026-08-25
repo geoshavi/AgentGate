@@ -232,6 +232,11 @@ class TaskState:
     # Derived from ``files_changed`` -- never from re-reading a skill file. See
     # capabilities/skills/registry.py:mutations_from_ledger.
     skill_source_mutations: list[str] = field(default_factory=list)
+    # Test detection (C3). Held as a plain dict for the same reason ``plan`` is:
+    # this dataclass is the serialized report, and keeping it free of imports
+    # from the modules it describes is what lets any of them change without
+    # breaking the report's shape. None means detection never ran.
+    test_detection: dict[str, Any] | None = None
     verification_status: str | None = None
     verification_defects: list[dict[str, Any]] = field(default_factory=list)
     final_summary: str | None = None

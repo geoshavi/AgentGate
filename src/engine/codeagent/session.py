@@ -420,6 +420,13 @@ class CodingSession:
                 self._state.loaded_skill_references.append(event.key)
         self._ctx.capability_log.clear()
 
+        # Last detection wins: re-running detect_tests after an edit is a fresh
+        # observation of the same workspace, and the report wants the current
+        # answer rather than a history of them.
+        for environment in self._ctx.testenv_log:
+            self._state.test_detection = environment.as_dict()
+        self._ctx.testenv_log.clear()
+
     # -- bookkeeping --------------------------------------------------------
 
     def _set_phase(self, phase: Phase) -> None:

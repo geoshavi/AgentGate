@@ -31,6 +31,7 @@ from engine.capabilities.skills import (
 )
 from engine.codeagent.tools.base import Tool
 from engine.codeagent.tools.skills import LoadSkillTool
+from engine.codeagent.tools.testenv import DetectTestsTool
 
 
 @dataclass(frozen=True)
@@ -109,24 +110,36 @@ def build_capabilities(
     *,
     skill_roots: Sequence[SkillRoot] = (),
     bounds: SkillBounds | None = None,
+    detect_tests: bool = False,
 ) -> CapabilityBundle:
     """Snapshot the roots, then build the tools. In that order, always.
 
-    No roots -- the default -- returns an empty bundle, which is what keeps a
-    run that configures nothing byte-identical to one from before this layer
-    existed: no catalogue in the prompt, no tool in the registry, nothing in the
-    report but empty lists.
-    """
-    if not skill_roots:
-        return CapabilityBundle()
+    Nothing requested -- the default -- returns an empty bundle, which is what
+    keeps a run that configures nothing byte-identical to one from before this
+    layer existed: no catalogue in the prompt, no tool in the registry, nothing
+    in the report but empty lists.
 
-    limits = bounds or SkillBounds()
-    registry = SkillRegistry.snapshot(skill_roots, bounds=limits)
-    return CapabilityBundle(
-        tools=build_capability_tools(registry, bounds=limits),
-        catalogue=registry.advertise(),
-        registry=registry,
-    )
+    ``detect_tests`` is **opt-in rather than automatic**, even though test
+    detection needs only the workspace and no configuration at all. Registering
+    it by default would add a tool to every run's catalogue, and the catalogue is
+    generated into the system prompt -- so every existing session's prompt would
+    change. That is exactly the regression C2 took care to make checkable, and
+    one explicit parameter is a cheaper way to keep it than a caveat.
+    """
+    tools: dict[str, Tool] = {}
+    catalogue = ""
+    registry: SkillRegistry | None = None
+
+    if skill_roots:
+        limits = bounds or SkillBounds()
+        registry = SkillRegistry.snapshot(skill_roots, bounds=limits)
+        tools.update(build_capability_tools(registry, bounds=limits))
+        catalogue = registry.advertise()
+
+    if detect_tests:
+        tools["detect_tests"] = DetectTestsTool()
+
+    return CapabilityBundle(tools=tools, catalogue=catalogue, registry=registry)
 
 
 __all__ = ["CapabilityBundle", "build_capabilities", "build_capability_tools"]

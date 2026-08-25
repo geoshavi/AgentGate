@@ -5,6 +5,9 @@ Two guarantees, and nothing else:
   1. A resolved path is inside the root, or the call raises.
   2. A resolved path is not credential-shaped, or the call raises.
 
+Both are enforced through ``capabilities/paths.py``, which holds the containment
+check and the credential screen once for every capability that reads a file.
+
 Deliberately a reimplementation of ``codeagent.workspace.Workspace.resolve``'s
 technique rather than an import of it, for three reasons in order of weight:
 
@@ -28,44 +31,16 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath
 
 from engine.capabilities.errors import SkillRootError
+from engine.capabilities.paths import contained, is_denied_name
 
 TRUST_BUILTIN = "builtin"
 TRUST_OPERATOR = "operator"
 TRUST_TIERS = frozenset({TRUST_BUILTIN, TRUST_OPERATOR})
 
-# Mirrors codeagent.workspace's screen. Repeated rather than imported for the
-# reasons in the module docstring; kept deliberately short, since a skill root
-# holds authored documentation and has no reason to contain any of these.
-DENIED_DIR_NAMES = frozenset({".git", ".ssh", ".aws", ".gnupg", ".engine", "node_modules"})
-DENIED_FILE_NAMES = frozenset(
-    {
-        ".env",
-        ".netrc",
-        "_netrc",
-        ".npmrc",
-        ".pypirc",
-        ".htpasswd",
-        "credentials",
-        "credentials.json",
-        "service-account.json",
-    }
-)
-DENIED_FILE_PREFIXES = (".env", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "secrets")
-DENIED_FILE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".jks")
-
-
-def is_denied_name(name: str) -> bool:
-    """True if ``name`` (one path component) is credential-shaped.
-
-    Public because enumeration filters entries it must never surface, and doing
-    that by catching a refusal per entry would be slower and easier to get wrong.
-    """
-    lowered = name.casefold()
-    if lowered in DENIED_FILE_NAMES or lowered in DENIED_DIR_NAMES:
-        return True
-    if lowered.startswith(DENIED_FILE_PREFIXES):
-        return True
-    return lowered.endswith(DENIED_FILE_SUFFIXES)
+# The credential screen lives in capabilities/paths.py, shared with the test
+# detector: two capabilities read files for different reasons and must refuse the
+# same names, and two copies of a security screen is two chances to fix only one.
+# Re-exported here so ``from ...skills.roots import is_denied_name`` still works.
 
 
 @dataclass(frozen=True)
@@ -144,11 +119,7 @@ class SkillRoot:
         Resolution follows symlinks first, so a link pointing outside the root is
         caught here even though its literal path looked harmless.
         """
-        try:
-            resolved = candidate.resolve()
-        except OSError:
-            return False
-        return resolved == self.path or resolved.is_relative_to(self.path)
+        return contained(self.path, candidate)
 
     def relative(self, path: Path) -> str:
         """Posix-style path of ``path`` relative to the root, for reporting."""
