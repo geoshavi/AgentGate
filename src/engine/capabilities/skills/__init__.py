@@ -26,6 +26,7 @@ from engine.capabilities.skills.registry import (
     SkillRegistry,
 )
 from engine.capabilities.skills.roots import (
+    BUILTIN_SKILL_PACKAGE,
     TRUST_BUILTIN,
     TRUST_OPERATOR,
     SkillRoot,
@@ -34,6 +35,7 @@ from engine.capabilities.skills.roots import (
 )
 
 __all__ = [
+    "BUILTIN_SKILL_PACKAGE",
     "MAX_DESCRIPTION_CHARS",
     "MAX_FRONTMATTER_BYTES",
     "MAX_NAME_CHARS",

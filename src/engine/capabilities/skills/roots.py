@@ -27,7 +27,10 @@ path separation -- a property of a layout, not of trust. What makes a skill
 trustworthy is the snapshot ordering in ``registry.py``, not its location.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path, PurePath
 
 from engine.capabilities.errors import SkillRootError
@@ -126,22 +129,57 @@ class SkillRoot:
         return path.resolve().relative_to(self.path).as_posix()
 
 
-def builtin_skill_root() -> Path | None:
-    """The engine's own ``skills/`` directory, or None if it is not there.
+BUILTIN_SKILL_PACKAGE = "engine.skill_library"
 
-    Trusted by *provenance*: it ships with the code under review, so an operator
-    who ran this engine already accepted it. That is the only thing the tier
-    means -- admission is not durable, and this root is snapshotted exactly like
-    any other (see ``registry.py``).
 
-    Located relative to this file rather than the process's working directory,
-    because the working directory during a run is the *target workspace* and a
-    ``skills/`` folder there is not ours. Returns None rather than raising when
-    absent: an installed wheel has no repository root, and a run with no
-    first-party skills is a valid run, not a broken one.
+@contextmanager
+def builtin_skill_root() -> Iterator[Path | None]:
+    """Yield a real directory holding the engine's own first-party skills.
+
+    Trusted by *provenance*: the content ships with the code under review, so an
+    operator who ran this engine already accepted it. That is all the tier means
+    -- admission is not durable, and this root is snapshotted exactly like any
+    other (see ``registry.py``).
+
+    Located through ``importlib.resources`` rather than relative to the
+    repository root, so one mechanism serves a source checkout and an installed
+    wheel alike. Resolving relative to the process's working directory would be
+    wrong in both: during a run that directory is the *target workspace*, and a
+    ``skills`` folder there is not ours.
+
+    **A context manager because materialisation may be needed and must be
+    bounded.** For a normal filesystem install -- a source checkout, an editable
+    install, an unpacked wheel -- the resource is already a real directory and is
+    yielded directly. For a loader that does not expose one (a zipimport), the
+    files are extracted to a temporary directory for the duration of the block
+    and removed on exit. Callers must therefore complete the snapshot *inside*
+    the block, which is exactly the C1 rule: every servable byte is read before
+    any mutating tool exists, and nothing is read afterwards. A path that
+    survived the block would be a lazily-trusted channel.
+
+    Yields None rather than raising when the package is absent or unreadable: a
+    run with no first-party skills is a valid run, not a broken one.
     """
-    candidate = Path(__file__).resolve().parents[4] / "skills"
-    return candidate if candidate.is_dir() else None
+    try:
+        resource = resources.files(BUILTIN_SKILL_PACKAGE)
+    except (ImportError, ModuleNotFoundError, TypeError):
+        yield None
+        return
+
+    # The overwhelmingly common case: the resource is already a directory on
+    # disk, so there is nothing to materialise and nothing to clean up.
+    if isinstance(resource, Path):
+        yield resource if resource.is_dir() else None
+        return
+
+    try:
+        with resources.as_file(resource) as materialised:
+            yield materialised if materialised.is_dir() else None
+    except (OSError, FileNotFoundError, NotADirectoryError, ValueError):
+        # as_file() on a directory requires Python 3.12+, and an exotic loader
+        # may refuse entirely. Losing first-party skills is a degradation, not a
+        # failure: the run proceeds without them.
+        yield None
 
 
 def _overlaps(root: Path, workspace_root: Path | str | None) -> bool:
@@ -159,6 +197,7 @@ def _overlaps(root: Path, workspace_root: Path | str | None) -> bool:
 
 
 __all__ = [
+    "BUILTIN_SKILL_PACKAGE",
     "TRUST_BUILTIN",
     "TRUST_OPERATOR",
     "TRUST_TIERS",

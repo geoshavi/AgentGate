@@ -21,10 +21,13 @@ The real skill is never mutated. The self-hosting test copies it first.
 
 import re
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+import engine.skill_library
 from engine.capabilities.skills import (
     MAX_DESCRIPTION_CHARS,
     TRUST_BUILTIN,
@@ -43,14 +46,15 @@ SKILL_NAME = "testing"
 BOUNDS = SkillBounds()
 
 
-def builtin_root() -> Path:
-    root = builtin_skill_root()
-    assert root is not None, "the repository's skills/ directory is missing"
-    return root
+# The authored source of truth. Read directly rather than through
+# builtin_skill_root(), which is the *production* resolution path and is tested
+# as such below -- these assertions are about what was written, and a test that
+# read them through the mechanism under test would be circular.
+LIBRARY_DIR = Path(engine.skill_library.__file__).resolve().parent
 
 
 def skill_dir() -> Path:
-    return builtin_root() / SKILL_NAME
+    return LIBRARY_DIR / SKILL_NAME
 
 
 def skill_text() -> str:
@@ -66,7 +70,7 @@ def reference_texts() -> dict[str, str]:
 
 def registry() -> SkillRegistry:
     return SkillRegistry.snapshot(
-        [SkillRoot.create(builtin_root(), trust_tier=TRUST_BUILTIN)], bounds=BOUNDS
+        [SkillRoot.create(LIBRARY_DIR, trust_tier=TRUST_BUILTIN)], bounds=BOUNDS
     )
 
 
@@ -125,7 +129,7 @@ def test_the_package_records_a_digest_and_its_provenance() -> None:
 
     assert len(package.body_digest) == 64
     assert package.trust_tier == TRUST_BUILTIN
-    assert package.source_root == builtin_root().resolve()
+    assert package.source_root == LIBRARY_DIR
 
 
 def test_the_body_stays_well_inside_its_bound() -> None:
@@ -361,12 +365,16 @@ def test_the_builtin_root_comes_first_so_it_wins_a_name_collision(tmp_path: Path
     assert bundle.shadowed_names() == [SKILL_NAME]
 
 
-def test_a_missing_builtin_root_is_not_an_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """An installed wheel has no repository root; a run with no first-party
-    skills is valid, not broken."""
+def test_a_missing_builtin_library_is_not_an_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A loader that cannot present the resources is a degradation, not a
+    failure: the run proceeds with no first-party skills."""
     import engine.codeagent.capabilities as assembly
 
-    monkeypatch.setattr(assembly, "builtin_skill_root", lambda: None)
+    @contextmanager
+    def absent() -> Iterator[None]:
+        yield None
+
+    monkeypatch.setattr(assembly, "builtin_skill_root", absent)
 
     assert build_capabilities(include_builtin_skills=True).registry is None
 
@@ -417,7 +425,7 @@ def test_a_reference_arrives_only_on_an_explicit_reference_load() -> None:
 
 def test_a_post_snapshot_edit_to_a_copy_cannot_alter_loaded_content(tmp_path: Path) -> None:
     root = tmp_path / "skills"
-    shutil.copytree(builtin_root(), root)
+    shutil.copytree(LIBRARY_DIR, root)
     workspace = tmp_path
     snapshot = SkillRegistry.snapshot(
         [SkillRoot.create(root, trust_tier=TRUST_BUILTIN, workspace_root=workspace)],
@@ -609,3 +617,174 @@ def test_the_report_records_provenance_without_the_skill_text(tmp_path: Path) ->
     assert "Never do any of the following" not in serialized
     assert "Choosing a test scope" not in serialized
     assert skill_text()[:120] not in serialized
+
+
+# -- packaging: one mechanism, checkout and wheel alike ----------------------
+
+
+def test_the_builtin_library_is_inside_the_engine_package() -> None:
+    """The whole packaging fix in one assertion: the authored content lives under
+    src/engine/, so `packages.find` ships it and no repo-root copy exists to
+    drift from."""
+    assert LIBRARY_DIR.parent.name == "engine"
+    assert (LIBRARY_DIR / "__init__.py").is_file()
+    assert not (LIBRARY_DIR.parents[2] / "skills").exists(), "a repo-root skills/ copy reappeared"
+
+
+def test_pyproject_declares_the_skill_files_as_package_data() -> None:
+    """Config-level proof that a built wheel carries the .md files. Without this
+    entry `packages.find` ships the package directory and none of its content."""
+    import tomllib
+
+    config = tomllib.loads((LIBRARY_DIR.parents[2] / "pyproject.toml").read_text(encoding="utf-8"))
+    package_data = config["tool"]["setuptools"]["package-data"]
+
+    assert "engine.skill_library" in package_data
+    assert any("*.md" in pattern for pattern in package_data["engine.skill_library"])
+
+
+def test_the_declared_glob_actually_matches_every_authored_file() -> None:
+    """The config could name a glob that matches nothing. Apply it and compare
+    against what is on disk, so a renamed directory or a .txt reference fails
+    here rather than silently shipping an empty package."""
+    import tomllib
+
+    config = tomllib.loads((LIBRARY_DIR.parents[2] / "pyproject.toml").read_text(encoding="utf-8"))
+    patterns = config["tool"]["setuptools"]["package-data"]["engine.skill_library"]
+
+    matched = {p.relative_to(LIBRARY_DIR).as_posix() for pat in patterns for p in LIBRARY_DIR.glob(pat)}
+    authored = {
+        p.relative_to(LIBRARY_DIR).as_posix()
+        for p in LIBRARY_DIR.rglob("*")
+        if p.is_file() and p.suffix != ".py" and "__pycache__" not in p.parts
+    }
+
+    assert authored, "no authored skill files found"
+    assert authored <= matched, f"package-data misses {sorted(authored - matched)}"
+    assert "testing/SKILL.md" in matched
+    assert "testing/references/selection.md" in matched
+    assert "testing/references/failure-triage.md" in matched
+
+
+def test_the_resolver_finds_the_library_from_a_source_checkout() -> None:
+    with builtin_skill_root() as root:
+        assert root is not None
+        assert (root / SKILL_NAME / "SKILL.md").is_file()
+
+
+def test_the_resolver_is_independent_of_the_working_directory(tmp_path: Path) -> None:
+    """During a run the working directory is the target workspace. A `skills`
+    folder there is not ours, and must not be picked up."""
+    import os
+
+    decoy = tmp_path / "skill_library" / "testing"
+    decoy.mkdir(parents=True)
+    (decoy / "SKILL.md").write_text(
+        "---\nname: testing\ndescription: A decoy.\n---\n\nDECOY BODY\n", encoding="utf-8"
+    )
+    previous = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        with builtin_skill_root() as root:
+            assert root is not None
+            body = (root / SKILL_NAME / "SKILL.md").read_text(encoding="utf-8")
+    finally:
+        os.chdir(previous)
+
+    assert "DECOY BODY" not in body
+
+
+def test_a_packaged_style_layout_resolves_to_equivalent_content(tmp_path: Path) -> None:
+    """Simulates an installed wheel: the package directory copied to a
+    site-packages-like location, imported under its own name, and resolved
+    through importlib.resources -- the same call production makes.
+
+    The manifest and body must come out identical to the checkout's, because
+    there is one authored copy and one resolution mechanism.
+    """
+    import sys
+    from importlib import resources
+
+    site = tmp_path / "site-packages"
+    pkg = site / "installed_engine_skills"
+    shutil.copytree(LIBRARY_DIR, pkg)
+    sys.path.insert(0, str(site))
+    try:
+        resource = resources.files("installed_engine_skills")
+        assert isinstance(resource, Path)
+        installed = SkillRegistry.snapshot(
+            [SkillRoot.create(resource, trust_tier=TRUST_BUILTIN)], bounds=BOUNDS
+        ).get(SKILL_NAME)
+    finally:
+        sys.path.remove(str(site))
+        sys.modules.pop("installed_engine_skills", None)
+
+    source = registry().get(SKILL_NAME)
+    assert installed.manifest == source.manifest
+    assert installed.body == source.body
+    assert installed.body_digest == source.body_digest
+    assert set(installed.references) == set(source.references)
+
+
+def test_both_layouts_go_through_the_same_snapshot_path(tmp_path: Path) -> None:
+    """No second parser and no special-case loader: a packaged root is admitted
+    by the same SkillRegistry.snapshot call as any operator root."""
+    packaged = tmp_path / "packaged"
+    shutil.copytree(LIBRARY_DIR, packaged)
+
+    from_source = registry()
+    from_packaged = SkillRegistry.snapshot(
+        [SkillRoot.create(packaged, trust_tier=TRUST_BUILTIN)], bounds=BOUNDS
+    )
+
+    assert from_source.names() == from_packaged.names() == (SKILL_NAME,)
+    assert from_source.errors == from_packaged.errors == ()
+    assert from_source.advertise() == from_packaged.advertise()
+
+
+def test_load_after_snapshot_reads_nothing_even_if_the_resource_vanished(tmp_path: Path) -> None:
+    """The C1 invariant under the packaging change. A materialised resource is
+    removed when its block ends, so a loader that read lazily would find nothing
+    -- and must not need to.
+    """
+    packaged = tmp_path / "packaged"
+    shutil.copytree(LIBRARY_DIR, packaged)
+    snapshot = SkillRegistry.snapshot(
+        [SkillRoot.create(packaged, trust_tier=TRUST_BUILTIN)], bounds=BOUNDS
+    )
+
+    shutil.rmtree(packaged)  # exactly what as_file() cleanup does on block exit
+
+    loader = SkillLoader(snapshot)
+    assert "Never do any of the following" in loader.load(SKILL_NAME).body
+    assert "Choosing a test scope" in loader.load(SKILL_NAME, reference="selection.md").body
+
+
+def test_the_bundle_survives_the_resource_block_closing() -> None:
+    """build_capabilities completes its snapshot inside the resource block, so
+    the bundle it returns is fully usable after the block has closed."""
+    bundle = build_capabilities(include_builtin_skills=True)
+    loader = SkillLoader(bundle.registry)  # type: ignore[arg-type]
+
+    assert "Never do any of the following" in loader.load(SKILL_NAME).body
+    assert bundle.catalogue and SKILL_NAME in bundle.catalogue
+
+
+def test_a_corrupt_builtin_library_degrades_rather_than_failing(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A malformed first-party skill must not take the run down with it."""
+    import engine.codeagent.capabilities as assembly
+
+    broken = tmp_path / "broken" / SKILL_NAME
+    broken.mkdir(parents=True)
+    (broken / "SKILL.md").write_text("---\nname: testing\ndescription: [unclosed\n---\n", encoding="utf-8")
+
+    @contextmanager
+    def corrupt() -> Iterator[Path]:
+        yield tmp_path / "broken"
+
+    monkeypatch.setattr(assembly, "builtin_skill_root", corrupt)
+    bundle = build_capabilities(include_builtin_skills=True)
+
+    assert bundle.advertised == ()
+    assert bundle.tools == {}
+    assert bundle.discovery_errors()

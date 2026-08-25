@@ -36,6 +36,16 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# First-party Agent Skills ship with the engine. They live inside the package
+# rather than at the repository root so one location serves both a source
+# checkout and an installed wheel: a repo-root directory would need a packaged
+# copy beside it, and two copies of authored instruction text is a drift problem
+# nobody notices until an installed agent behaves differently from a developed
+# one. Located at runtime through importlib.resources -- see
+# capabilities/skills/roots.py:builtin_skill_root.
+[tool.setuptools.package-data]
+"engine.skill_library" = ["**/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

@@ -19,7 +19,8 @@ capabilities that do not exist yet: a second capability should extend this by on
 field when it is real, not be anticipated by an abstraction now.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -144,14 +145,18 @@ def build_capabilities(
     catalogue = ""
     registry: SkillRegistry | None = None
 
-    roots = _ordered_roots(
-        skill_roots, include_builtin=include_builtin_skills, workspace_root=workspace_root
-    )
-    if roots:
-        limits = bounds or SkillBounds()
-        registry = SkillRegistry.snapshot(roots, bounds=limits)
-        tools.update(build_capability_tools(registry, bounds=limits))
-        catalogue = registry.advertise()
+    # The snapshot happens INSIDE this block, deliberately. When the first-party
+    # skills come from a loader that cannot expose a real directory, the context
+    # manager materialises them for its duration and removes them on exit -- so
+    # completing the snapshot here is what guarantees every servable byte was
+    # read while the source still existed, and that nothing can read it later.
+    with _builtin_root(include_builtin_skills, workspace_root) as builtin:
+        roots = [*([builtin] if builtin is not None else []), *skill_roots]
+        if roots:
+            limits = bounds or SkillBounds()
+            registry = SkillRegistry.snapshot(roots, bounds=limits)
+            tools.update(build_capability_tools(registry, bounds=limits))
+            catalogue = registry.advertise()
 
     if detect_tests:
         tools["detect_tests"] = DetectTestsTool()
@@ -159,32 +164,32 @@ def build_capabilities(
     return CapabilityBundle(tools=tools, catalogue=catalogue, registry=registry)
 
 
-def _ordered_roots(
-    operator_roots: Sequence[SkillRoot],
-    *,
-    include_builtin: bool,
-    workspace_root: Path | None,
-) -> list[SkillRoot]:
-    """Builtin first, then operator roots in the order they were declared.
+@contextmanager
+def _builtin_root(
+    include_builtin: bool, workspace_root: Path | None
+) -> Iterator[SkillRoot | None]:
+    """The engine's own skill root, admitted as ``builtin``, for one block.
 
-    The order is the whole of the shadowing rule: ``SkillRegistry.snapshot``
-    keeps the first package it sees for a given name, so putting the engine's own
-    root first is what stops an operator root quietly replacing a first-party
-    skill with something of the same name.
+    Yielded from a context manager because ``builtin_skill_root`` may have had to
+    extract packaged resources to a temporary directory; the caller must finish
+    reading them before the block ends. Yields None when not requested, when the
+    package is absent, or when the resource cannot be presented as a directory --
+    all three are a run without first-party skills, which is valid.
 
-    A missing builtin directory is not an error -- an installed wheel has no
-    repository root, and a run with no first-party skills is a valid run.
+    Callers place this root **first**, which is the whole of the shadowing rule:
+    ``SkillRegistry.snapshot`` keeps the first package it sees for a name, so
+    ordering the engine's own root ahead of operator roots is what stops an
+    operator quietly replacing a first-party skill with something of the same
+    name.
     """
-    roots = list(operator_roots)
     if not include_builtin:
-        return roots
-    path = builtin_skill_root()
-    if path is None:
-        return roots
-    builtin = SkillRoot.create(
-        path, trust_tier=TRUST_BUILTIN, workspace_root=workspace_root
-    )
-    return [builtin, *roots]
+        yield None
+        return
+    with builtin_skill_root() as path:
+        if path is None:
+            yield None
+            return
+        yield SkillRoot.create(path, trust_tier=TRUST_BUILTIN, workspace_root=workspace_root)
 
 
 __all__ = ["CapabilityBundle", "build_capabilities", "build_capability_tools"]
