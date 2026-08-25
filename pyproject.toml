@@ -45,6 +45,10 @@ where = ["src"]
 # capabilities/skills/roots.py:builtin_skill_root.
 [tool.setuptools.package-data]
 "engine.skill_library" = ["**/*.md"]
+# The first-party Semgrep ruleset, shipped for the same reason and located the
+# same way -- see capabilities/analysis/rules.py:builtin_ruleset. Local YAML is
+# what keeps a scan free of any Semgrep registry fetch.
+"engine.rule_library" = ["**/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

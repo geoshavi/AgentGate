@@ -44,6 +44,7 @@ from engine.capabilities.skills import (
     builtin_skill_root,
 )
 from engine.codeagent.state import TaskState
+from engine.codeagent.tools.analysis import AnalyzeCodeTool
 from engine.codeagent.tools.base import Tool
 from engine.codeagent.tools.docs import LookupDocsTool
 from engine.codeagent.tools.github import LookupGitHubTool
@@ -133,6 +134,7 @@ def build_capabilities(
     skill_roots: Sequence[SkillRoot] = (),
     bounds: SkillBounds | None = None,
     detect_tests: bool = False,
+    analyze: bool = False,
     include_builtin_skills: bool = False,
     workspace_root: Path | None = None,
     docs: DocsPort | None = None,
@@ -148,9 +150,9 @@ def build_capabilities(
     layer existed: no catalogue in the prompt, no tool in the registry, nothing
     in the report but empty lists.
 
-    ``detect_tests`` and ``include_builtin_skills`` are **opt-in rather than
-    automatic**, even though both are locally available and need no
-    configuration. Either one registers a tool, and the tool catalogue is
+    ``detect_tests``, ``analyze`` and ``include_builtin_skills`` are **opt-in
+    rather than automatic**, even though all three are locally available and need
+    no configuration. Each one registers a tool, and the tool catalogue is
     generated into the system prompt -- so switching them on by default would
     change every existing session's prompt. That is exactly the regression C2
     took care to make checkable, and two explicit parameters are a cheaper way to
@@ -183,6 +185,13 @@ def build_capabilities(
 
     if detect_tests:
         tools["detect_tests"] = DetectTestsTool()
+
+    # Static analysis, on the same opt-in terms and for the same reason: it
+    # registers a tool, and the catalogue is generated into the system prompt.
+    # The tool runs the analyser through the session's own executor and policy,
+    # so nothing is decided here beyond whether it exists.
+    if analyze:
+        tools["analyze_code"] = AnalyzeCodeTool()
 
     # External documentation is registered only when a port exists AND the policy
     # admits the capability and operation. Absence is the safer interface: a
@@ -281,8 +290,13 @@ def context_sources_from(states: Sequence[TaskState]) -> dict[str, Any]:
         "failures": [reason for state in states for reason in state.external_failures],
         "events": [event for state in states for event in state.external_events],
     }
+    # Every scan across every round, in order. Metadata only -- counts, rule
+    # ids, exit status -- so a report can say what was analysed and what came
+    # back without carrying the analyser's output.
+    analysis = [run for state in states for run in state.analysis_runs]
     return {
         "test_detection": detection,
+        "analysis": analysis or None,
         "external": external if external["events"] else None,
         "skills": {
             "advertised": list(final.advertised_skills),

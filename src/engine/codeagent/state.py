@@ -271,6 +271,11 @@ class TaskState:
     external_failures: list[str] = field(default_factory=list)
     external_events: list[dict[str, Any]] = field(default_factory=list)
     test_detection: dict[str, Any] | None = None
+    # Static-analysis runs, in the order they happened. A list rather than a
+    # last-wins field like test_detection: detection is one answer about the
+    # workspace, while two scans of two targets are two separate observations
+    # and a report wants both.
+    analysis_runs: list[dict[str, Any]] = field(default_factory=list)
     verification_status: str | None = None
     verification_defects: list[dict[str, Any]] = field(default_factory=list)
     final_summary: str | None = None

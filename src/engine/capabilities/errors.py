@@ -57,7 +57,19 @@ class GitHubUnavailable(CapabilityError):
     """
 
 
+class AnalysisUnavailable(CapabilityError):
+    """A static-analysis run produced nothing usable.
+
+    The third sibling of ``DocsUnavailable`` and ``GitHubUnavailable``, and for
+    the same reason: a missing analyser, a missing ruleset, a timeout, a non-zero
+    exit and an unreadable output are one thing to the caller, whose next move in
+    every case is to continue from the code itself. Analysis is advisory, so this
+    is never fatal to a session.
+    """
+
+
 __all__ = [
+    "AnalysisUnavailable",
     "CapabilityError",
     "DocsUnavailable",
     "EgressDenied",

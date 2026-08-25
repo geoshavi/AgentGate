@@ -213,6 +213,10 @@ def test_serialized_state_exposes_only_observable_execution_data() -> None:
         # Test detection (C3): a structured result -- framework, confidence,
         # evidence source names, argv. No configuration file contents.
         "test_detection",
+        # Static analysis (C9): per-scan execution and result metadata -- exit
+        # status, timing, counts, rule ids. No finding message and no line of
+        # scanned source, for the same reason skill bodies are absent above.
+        "analysis_runs",
         # External capabilities (C6): counts, provenance and refusal reasons.
         # There is deliberately no field for a response body, a server, a URL
         # or a credential -- none of those is a thing this layer should be

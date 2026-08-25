@@ -123,6 +123,21 @@ def is_sensitive_env_name(name: str) -> bool:
 class CommandPolicy:
     allowed_programs: frozenset[str] = field(default=DEFAULT_ALLOWED_PROGRAMS)
     git_subcommands: frozenset[str] = field(default=DEFAULT_GIT_SUBCOMMANDS)
+    # Exact argument strings the *engine itself* supplies, exempt from the
+    # argument rules below. Empty by default, so a policy nobody widened behaves
+    # exactly as it did before this field existed.
+    #
+    # It exists for one shape of command: an argv built entirely from a frozen
+    # template, where a value is chosen by the engine and cannot be influenced by
+    # a model -- the analysis capability's path to its own shipped ruleset, which
+    # lives outside the workspace and is therefore absolute. The argument rules
+    # exist to constrain *model-supplied* values, and applying them to a constant
+    # the engine wrote would refuse the engine's own file for no gain.
+    #
+    # **Never populate this from model input, tool arguments, or anything derived
+    # from them.** A trusted argument is trusted absolutely: it skips the
+    # metacharacter, traversal and absolute-path checks entirely.
+    trusted_args: frozenset[str] = field(default=frozenset())
 
     def check(self, argv: object) -> list[str]:
         """Validate ``argv`` and return the normalized form to execute.
@@ -184,6 +199,9 @@ class CommandPolicy:
             )
 
     def _check_argument(self, arg: str) -> None:
+        if arg in self.trusted_args:
+            # Engine-owned and not model-influenced -- see the field's comment.
+            return
         lowered = arg.casefold()
         if lowered in DENIED_FLAGS:
             raise CommandDenied(f"flag {arg!r} is not allowed")

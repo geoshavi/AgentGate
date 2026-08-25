@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from engine.capabilities.analysis import AnalysisRun
 from engine.capabilities.testenv import TestEnvironment
 from engine.codeagent.limits import Limits
 from engine.codeagent.policy import CommandDenied, CommandPolicy
@@ -61,6 +62,12 @@ class ToolContext:
     # kind of fact from a local disclosure: it left the machine, it cost a budget
     # nothing else spends, and it can fail in ways no local tool can.
     external_log: list[ExternalEvent] = field(default_factory=list)
+    # Static-analysis runs, appended by tools/analysis.py. A sink of its own for
+    # the same reason testenv_log is: an AnalysisRun is a structured value with
+    # facts no ToolResult has room for -- exit status, duration, how many
+    # findings existed before the reported ones were cut -- and it is advisory
+    # evidence rather than a disclosure, a command ledger entry or an egress.
+    analysis_log: list[AnalysisRun] = field(default_factory=list)
 
 
 class Tool(Protocol):

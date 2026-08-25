@@ -427,6 +427,13 @@ class CodingSession:
             self._state.test_detection = environment.as_dict()
         self._ctx.testenv_log.clear()
 
+        # Every scan is kept, unlike detection above: two scans of two targets
+        # are two observations. Metadata only -- as_dict carries counts, rule
+        # ids and exit status, never a message or a line of source.
+        for analysis in self._ctx.analysis_log:
+            self._state.analysis_runs.append(dict(analysis.as_dict()))
+        self._ctx.analysis_log.clear()
+
         # A distinct name from the capability loop above: the two carry different
         # record types, and reusing one binding would let a future edit mix them.
         for external in self._ctx.external_log:
