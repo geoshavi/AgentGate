@@ -307,10 +307,14 @@ def context_sources_from(states: Sequence[TaskState]) -> dict[str, Any]:
     # target, result count -- never the rendered result, matching analysis
     # above.
     graph_queries = [query for state in states for query in state.graph_queries]
+    # Every finding across every round, in order. Advisory evidence, never a
+    # verdict -- see codeagent/state.py:SecurityFinding.
+    security_findings = [f for state in states for f in state.security_findings]
     return {
         "test_detection": detection,
         "analysis": analysis or None,
         "graph_queries": graph_queries or None,
+        "security_findings": security_findings or None,
         "external": external if external["events"] else None,
         "skills": {
             "advertised": list(final.advertised_skills),

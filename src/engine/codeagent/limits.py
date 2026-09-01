@@ -147,6 +147,16 @@ class Limits:
     max_graph_file_bytes: int = 300_000
     max_graph_results: int = 30
 
+    # Security review (C14). A curated ceiling, not a volume bound like the
+    # ones above: a finding is a claim the model composes and a person will
+    # read, so this caps how many one session may record rather than how much
+    # of one is shown. max_security_finding_field_chars bounds each of a
+    # finding's five free-text fields (category, rationale, location,
+    # evidence, recommendation) -- clipped, not refused, the same rule
+    # plan.py's text fields follow.
+    max_security_findings: int = 20
+    max_security_finding_field_chars: int = 300
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))

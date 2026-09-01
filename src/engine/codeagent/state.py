@@ -195,6 +195,49 @@ class GraphQuery:
         return self.error is None
 
 
+# The Security Review Agent's own fixed vocabulary for a finding's severity and
+# its evidentiary basis. Deliberately NOT drawn from verification/rubric.py's
+# defect schema: a finding here is advisory evidence a person reads, never a
+# verdict input, and reusing that schema's words would be exactly the kind of
+# accidental promotion verify.py's own docstring warns Semgrep findings against
+# -- two vocabularies that look alike is how advisory evidence becomes a
+# verdict input by accident.
+SECURITY_SEVERITIES = frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"})
+# "observed": the agent can point at the exact code that shows this.
+# "hypothesis": a suspicion worth recording, not yet confirmed by reading the
+# code that would prove or refute it. Structural, not a prose convention --
+# report_finding rejects anything else, which is what makes "separate observed
+# evidence from hypotheses" a property of the record rather than an
+# instruction a model can blur.
+SECURITY_BASES = frozenset({"observed", "hypothesis"})
+
+
+@dataclass(frozen=True)
+class SecurityFinding:
+    """One security-review finding, or a refusal to record one.
+
+    Every field is bounded and already clipped by the time it reaches here;
+    ``severity`` and ``basis`` are validated against the fixed sets above
+    rather than clipped, because they carry structural meaning a truncation
+    would silently corrupt. Advisory only -- nothing downstream maps a finding
+    onto AgentGate's verdict, severity threshold, or judge lenses, and this
+    record is never consulted to decide anything.
+    """
+
+    category: str
+    severity: str = ""
+    rationale: str = ""
+    location: str = ""
+    evidence: str = ""
+    recommendation: str = ""
+    basis: str = ""
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
 @dataclass(frozen=True)
 class TestRun:
     # pytest collects any class named Test*; this is a record, not a suite.
@@ -302,6 +345,11 @@ class TaskState:
     # reason analysis_runs is: each lookup is a separate observation of the
     # workspace, and a report wants all of them rather than the last one.
     graph_queries: list[dict[str, Any]] = field(default_factory=list)
+    # Security-review findings, in the order they were recorded. A list for the
+    # same reason graph_queries is: each finding is a separate observation, and
+    # a report wants all of them. Populated only by the Security Review Agent's
+    # own report_finding tool -- every other agent leaves this empty.
+    security_findings: list[dict[str, Any]] = field(default_factory=list)
     verification_status: str | None = None
     verification_defects: list[dict[str, Any]] = field(default_factory=list)
     final_summary: str | None = None

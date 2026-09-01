@@ -440,6 +440,12 @@ class CodingSession:
             self._state.graph_queries.append(asdict(query))
         self._ctx.graph_log.clear()
 
+        # Every finding is kept: a security review's whole deliverable is the
+        # list of what it found, not the last one.
+        for finding in self._ctx.security_findings_log:
+            self._state.security_findings.append(asdict(finding))
+        self._ctx.security_findings_log.clear()
+
         # A distinct name from the capability loop above: the two carry different
         # record types, and reusing one binding would let a future edit mix them.
         for external in self._ctx.external_log:
