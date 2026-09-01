@@ -47,6 +47,7 @@ from engine.codeagent.state import TaskState
 from engine.codeagent.tools.analysis import AnalyzeCodeTool
 from engine.codeagent.tools.base import Tool
 from engine.codeagent.tools.docs import LookupDocsTool
+from engine.codeagent.tools.findings import ReportFindingTool
 from engine.codeagent.tools.github import LookupGitHubTool
 from engine.codeagent.tools.graph import RepoGraphTool
 from engine.codeagent.tools.skills import LoadSkillTool
@@ -137,6 +138,7 @@ def build_capabilities(
     detect_tests: bool = False,
     analyze: bool = False,
     graph: bool = False,
+    report_findings: bool = False,
     include_builtin_skills: bool = False,
     workspace_root: Path | None = None,
     docs: DocsPort | None = None,
@@ -152,13 +154,14 @@ def build_capabilities(
     layer existed: no catalogue in the prompt, no tool in the registry, nothing
     in the report but empty lists.
 
-    ``detect_tests``, ``analyze``, ``graph`` and ``include_builtin_skills`` are
-    **opt-in rather than automatic**, even though all four are locally available
-    and need no configuration. Each one registers a tool, and the tool catalogue
-    is generated into the system prompt -- so switching them on by default would
-    change every existing session's prompt. That is exactly the regression C2
-    took care to make checkable, and explicit parameters are a cheaper way to
-    keep it than a caveat.
+    ``detect_tests``, ``analyze``, ``graph``, ``report_findings`` and
+    ``include_builtin_skills`` are **opt-in rather than automatic**, even
+    though all five are locally available and need no configuration. Each one
+    registers a tool, and the tool catalogue is generated into the system
+    prompt -- so switching them on by default would change every existing
+    session's prompt. That is exactly the regression C2 took care to make
+    checkable, and explicit parameters are a cheaper way to keep it than a
+    caveat.
 
     ``include_builtin_skills`` prepends the engine's own ``skills/`` directory,
     **first** in root order, so a first-party skill wins a name collision with an
@@ -201,6 +204,15 @@ def build_capabilities(
     # subprocess -- reducing reads before an edit rather than replacing them.
     if graph:
         tools["repo_graph"] = RepoGraphTool()
+
+    # A read-only review agent's one deliverable mechanism, on the same
+    # opt-in terms: it registers a tool, and the catalogue is generated into
+    # the system prompt. Records a validated, bounded finding -- category,
+    # severity, evidence, recommendation -- and nothing else; it changes no
+    # file and decides no verdict. Shared by Security (C14) and Architecture
+    # (C15) rather than each defining its own recording tool.
+    if report_findings:
+        tools["report_finding"] = ReportFindingTool()
 
     # External documentation is registered only when a port exists AND the policy
     # admits the capability and operation. Absence is the safer interface: a
@@ -308,13 +320,13 @@ def context_sources_from(states: Sequence[TaskState]) -> dict[str, Any]:
     # above.
     graph_queries = [query for state in states for query in state.graph_queries]
     # Every finding across every round, in order. Advisory evidence, never a
-    # verdict -- see codeagent/state.py:SecurityFinding.
-    security_findings = [f for state in states for f in state.security_findings]
+    # verdict -- see codeagent/state.py:ReviewFinding.
+    review_findings = [f for state in states for f in state.review_findings]
     return {
         "test_detection": detection,
         "analysis": analysis or None,
         "graph_queries": graph_queries or None,
-        "security_findings": security_findings or None,
+        "review_findings": review_findings or None,
         "external": external if external["events"] else None,
         "skills": {
             "advertised": list(final.advertised_skills),

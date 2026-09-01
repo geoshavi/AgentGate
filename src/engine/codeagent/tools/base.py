@@ -25,7 +25,7 @@ from engine.codeagent.state import (
     CommandRun,
     ExternalEvent,
     GraphQuery,
-    SecurityFinding,
+    ReviewFinding,
     ToolResult,
 )
 from engine.codeagent.workspace import Workspace, WorkspaceError
@@ -81,12 +81,13 @@ class ToolContext:
     # room for, and it is evidence about what the agent looked up rather than a
     # command, a disclosure or an egress.
     graph_log: list[GraphQuery] = field(default_factory=list)
-    # Security-review findings, appended by the Security Review Agent's own
-    # report_finding tool (securityagent/tools/finding.py). A sink of its own
-    # for the same reason graph_log is: a SecurityFinding is a structured fact
-    # -- category, severity, evidence, recommendation -- ToolResult has no room
-    # for, and it is advisory evidence a person reads, never a verdict input.
-    security_findings_log: list[SecurityFinding] = field(default_factory=list)
+    # Review findings, appended by the opt-in report_finding tool
+    # (tools/findings.py) a read-only review agent (Security, Architecture)
+    # registers. A sink of its own for the same reason graph_log is: a
+    # ReviewFinding is a structured fact -- category, severity, evidence,
+    # recommendation -- ToolResult has no room for, and it is advisory
+    # evidence a person reads, never a verdict input.
+    review_findings_log: list[ReviewFinding] = field(default_factory=list)
 
 
 class Tool(Protocol):

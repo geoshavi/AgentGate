@@ -16,7 +16,7 @@ what actually happens instead: findings go to ``report_finding``, and ending
 the session is not a verdict any more than it is for any other agent here.
 """
 
-from engine.codeagent.state import SECURITY_BASES, SECURITY_SEVERITIES
+from engine.codeagent.state import REVIEW_BASES, REVIEW_SEVERITIES
 from engine.codeagent.tools.base import Tool
 
 AGENT_NAME = "SecurityReviewAgent.turn"
@@ -30,8 +30,8 @@ def build_security_prompt(tools: dict[str, Tool], *, skills_catalogue: str = "")
         if not skills_catalogue
         else f"\n\nAvailable skills (call load_skill to read one in full):\n{skills_catalogue}"
     )
-    severities = "/".join(sorted(SECURITY_SEVERITIES))
-    bases = "/".join(sorted(SECURITY_BASES))
+    severities = "/".join(sorted(REVIEW_SEVERITIES))
+    bases = "/".join(sorted(REVIEW_BASES))
     return f"""You are a security review agent working inside a fixed workspace. Your job
 is to find and report concrete security risks -- you do not fix them. This
 agent has no write_file, replace_exact or run_command tool: it cannot edit the
