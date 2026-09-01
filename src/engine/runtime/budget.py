@@ -14,21 +14,21 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 
 # USD per token. Sourced from https://platform.claude.com/docs/en/about-claude/pricing
-# on 2026-08-04. "cache_creation" uses the 5-minute cache-write rate (the
-# recommended default per that page); the 1-hour write rate ($4/MTok for
-# Sonnet 5, $2/MTok for Haiku 4.5) isn't represented separately since
-# nothing in this codebase sets cache_control yet -- both cache columns are
-# always 0 in practice today. If 1-hour caching gets adopted, this table
-# needs a second cache-write column and Gateway/GenerationResult need to
-# start distinguishing which duration was used.
+# on 2026-08-04, reverified 2026-09-01. "cache_creation" uses the 5-minute
+# cache-write rate (the recommended default per that page); the 1-hour
+# write rate ($4/MTok for Sonnet 5, $2/MTok for Haiku 4.5) isn't
+# represented separately since nothing in this codebase sets cache_control
+# yet -- both cache columns are always 0 in practice today. If 1-hour
+# caching gets adopted, this table needs a second cache-write column and
+# Gateway/GenerationResult need to start distinguishing which duration was
+# used.
 #
-# Claude Sonnet 5 has time-boxed introductory pricing: $2/$10 per MTok
-# (input/output) through 2026-08-31, then $3/$15 per MTok from 2026-09-01
-# onward (see the pricing page's "claude-sonnet-5-introductory-pricing"
-# note). The rates below are the introductory rate, correct as of the
-# 2026-08-04 sourcing date -- this table must be updated by 2026-09-01 or
-# every Sonnet 5 call will under-report actual spend by 50% on output and
-# 33% on non-cached input.
+# Claude Sonnet 5 was launched with time-boxed introductory pricing ($2/$10
+# per MTok input/output) that was scheduled to rise to $3/$15 on
+# 2026-09-01. Per the pricing page's "claude-sonnet-5-introductory-pricing"
+# note as of the 2026-09-01 reverification, that increase will not occur --
+# $2/$10 is now the standard, permanent rate. The values below are
+# unchanged from the 2026-08-04 sourcing.
 PRICE_TABLE: dict[str, dict[str, Decimal]] = {
     "claude-sonnet-5": {
         "input": Decimal("0.000002"),
