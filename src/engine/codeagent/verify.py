@@ -50,6 +50,7 @@ from engine.codeagent.limits import DEFAULT_LIMITS, Limits
 from engine.codeagent.log import SessionLog
 from engine.codeagent.plan import PlanOutcome
 from engine.codeagent.policy import DEFAULT_POLICY, CommandPolicy
+from engine.codeagent.session import AGENT_NAME as SESSION_AGENT_NAME
 from engine.codeagent.session import CodingSession
 from engine.codeagent.state import SessionStatus, TaskState
 from engine.codeagent.tools.base import Tool
@@ -363,6 +364,8 @@ def run_verified_session(
     planning: PlanOutcome | None = None,
     capabilities: CapabilityBundle | None = None,
     verifier: Callable[..., tuple[str, dict, list[VerificationResult]]] = run_verification,
+    system_prompt: str | None = None,
+    agent_name: str = SESSION_AGENT_NAME,
 ) -> VerifiedRun:
     """Run the agent, verify its work, and repair against real defects.
 
@@ -375,6 +378,15 @@ def run_verified_session(
     to each, so repairs cannot extend a session past its own bounds. The budget
     is shared for free -- one BudgetController serves every round and every
     judge call.
+
+    ``system_prompt`` and ``agent_name`` are the same two injection points
+    ``CodingSession`` itself exposes -- for the Refactoring Agent (C12), this
+    same verified loop with a different brief and a different metrics label,
+    not a second loop. Both default to the Coding Agent's own behaviour, so
+    every existing call site produces a byte-identical run. Nothing about
+    verification changes: ``_verify``, ``verdict.gate`` and the repair trigger
+    below read only ``outcome`` and ``state``, neither of which carries the
+    persona that produced them.
     """
     sink = log if log is not None else SessionLog()
     started = clock()
@@ -396,6 +408,8 @@ def run_verified_session(
         clock=clock,
         planning=planning,
         capabilities=capabilities,
+        system_prompt=system_prompt,
+        agent_name=agent_name,
     )
     state = session.run()
     states.append(state)
@@ -448,6 +462,8 @@ def run_verified_session(
             # time and budget already follow.
             capabilities=capabilities,
             repair_feedback=render_repair_feedback(outcome),
+            system_prompt=system_prompt,
+            agent_name=agent_name,
         )
         state = repair_session.run()
         states.append(state)
