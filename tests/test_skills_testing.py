@@ -602,7 +602,10 @@ def test_the_report_records_provenance_without_the_skill_text(tmp_path: Path) ->
     )
 
     skills = report.context_sources["skills"]
-    assert skills["advertised"] == [SKILL_NAME]
+    # Membership, not exact equality: the catalogue advertises every builtin
+    # skill, and this test is about one skill's provenance, not about how many
+    # first-party skills currently ship.
+    assert SKILL_NAME in skills["advertised"]
     assert skills["loaded"] == [SKILL_NAME]
     assert skills["references"] == [f"{SKILL_NAME}/selection.md"]
     assert skills["chars"] > 0
@@ -737,7 +740,10 @@ def test_both_layouts_go_through_the_same_snapshot_path(tmp_path: Path) -> None:
         [SkillRoot.create(packaged, trust_tier=TRUST_BUILTIN)], bounds=BOUNDS
     )
 
-    assert from_source.names() == from_packaged.names() == (SKILL_NAME,)
+    # Equal to each other -- the property under test -- and each containing
+    # this skill; not pinned to the exact set of skills currently shipped.
+    assert from_source.names() == from_packaged.names()
+    assert SKILL_NAME in from_source.names()
     assert from_source.errors == from_packaged.errors == ()
     assert from_source.advertise() == from_packaged.advertise()
 

@@ -390,7 +390,10 @@ def test_the_report_carries_both_context_sources(tmp_path: Path) -> None:
 
     sources = result.report.context_sources
     skills = sources["skills"]
-    assert skills["advertised"] == [SKILL]
+    # Membership, not exact equality: the catalogue advertises every builtin
+    # skill, and this test is about one skill's provenance, not about how many
+    # first-party skills currently ship.
+    assert SKILL in skills["advertised"]
     assert skills["loaded"] == [SKILL]
     assert skills["references"] == [f"{SKILL}/selection.md"]
     assert skills["chars"] > 0
