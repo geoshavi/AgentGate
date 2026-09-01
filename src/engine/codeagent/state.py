@@ -174,6 +174,28 @@ class ExternalEvent:
 
 
 @dataclass(frozen=True)
+class GraphQuery:
+    """One repository-graph query, or one refusal.
+
+    Records what was asked (the operation and its target) and how much came
+    back -- never the rendered result itself, which is already bounded and
+    already visible to the model as the tool's own output. A report should be
+    able to say what the agent looked up without becoming a second copy of the
+    same evidence.
+    """
+
+    op: str
+    target: str = ""
+    result_count: int = 0
+    truncated: bool = False
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+@dataclass(frozen=True)
 class TestRun:
     # pytest collects any class named Test*; this is a record, not a suite.
     # Not annotated, so dataclass does not treat it as a field.
@@ -276,6 +298,10 @@ class TaskState:
     # workspace, while two scans of two targets are two separate observations
     # and a report wants both.
     analysis_runs: list[dict[str, Any]] = field(default_factory=list)
+    # Repository-graph queries, in the order they happened. A list for the same
+    # reason analysis_runs is: each lookup is a separate observation of the
+    # workspace, and a report wants all of them rather than the last one.
+    graph_queries: list[dict[str, Any]] = field(default_factory=list)
     verification_status: str | None = None
     verification_defects: list[dict[str, Any]] = field(default_factory=list)
     final_summary: str | None = None

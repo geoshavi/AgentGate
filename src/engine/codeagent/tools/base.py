@@ -20,7 +20,13 @@ from engine.capabilities.analysis import AnalysisRun
 from engine.capabilities.testenv import TestEnvironment
 from engine.codeagent.limits import Limits
 from engine.codeagent.policy import CommandDenied, CommandPolicy
-from engine.codeagent.state import CapabilityEvent, CommandRun, ExternalEvent, ToolResult
+from engine.codeagent.state import (
+    CapabilityEvent,
+    CommandRun,
+    ExternalEvent,
+    GraphQuery,
+    ToolResult,
+)
 from engine.codeagent.workspace import Workspace, WorkspaceError
 
 
@@ -68,6 +74,12 @@ class ToolContext:
     # findings existed before the reported ones were cut -- and it is advisory
     # evidence rather than a disclosure, a command ledger entry or an egress.
     analysis_log: list[AnalysisRun] = field(default_factory=list)
+    # Repository-graph queries, appended by tools/graph.py. A sink of its own
+    # for the same reason analysis_log is: a GraphQuery is a structured fact --
+    # which operation, which target, how many results -- that ToolResult has no
+    # room for, and it is evidence about what the agent looked up rather than a
+    # command, a disclosure or an egress.
+    graph_log: list[GraphQuery] = field(default_factory=list)
 
 
 class Tool(Protocol):

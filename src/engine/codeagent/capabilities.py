@@ -48,6 +48,7 @@ from engine.codeagent.tools.analysis import AnalyzeCodeTool
 from engine.codeagent.tools.base import Tool
 from engine.codeagent.tools.docs import LookupDocsTool
 from engine.codeagent.tools.github import LookupGitHubTool
+from engine.codeagent.tools.graph import RepoGraphTool
 from engine.codeagent.tools.skills import LoadSkillTool
 from engine.codeagent.tools.testenv import DetectTestsTool
 
@@ -135,6 +136,7 @@ def build_capabilities(
     bounds: SkillBounds | None = None,
     detect_tests: bool = False,
     analyze: bool = False,
+    graph: bool = False,
     include_builtin_skills: bool = False,
     workspace_root: Path | None = None,
     docs: DocsPort | None = None,
@@ -150,12 +152,12 @@ def build_capabilities(
     layer existed: no catalogue in the prompt, no tool in the registry, nothing
     in the report but empty lists.
 
-    ``detect_tests``, ``analyze`` and ``include_builtin_skills`` are **opt-in
-    rather than automatic**, even though all three are locally available and need
-    no configuration. Each one registers a tool, and the tool catalogue is
-    generated into the system prompt -- so switching them on by default would
+    ``detect_tests``, ``analyze``, ``graph`` and ``include_builtin_skills`` are
+    **opt-in rather than automatic**, even though all four are locally available
+    and need no configuration. Each one registers a tool, and the tool catalogue
+    is generated into the system prompt -- so switching them on by default would
     change every existing session's prompt. That is exactly the regression C2
-    took care to make checkable, and two explicit parameters are a cheaper way to
+    took care to make checkable, and explicit parameters are a cheaper way to
     keep it than a caveat.
 
     ``include_builtin_skills`` prepends the engine's own ``skills/`` directory,
@@ -192,6 +194,13 @@ def build_capabilities(
     # so nothing is decided here beyond whether it exists.
     if analyze:
         tools["analyze_code"] = AnalyzeCodeTool()
+
+    # Repository graph, on the same opt-in terms and for the same reason: it
+    # registers a tool, and the catalogue is generated into the system prompt.
+    # A local, deterministic AST/import scan of the workspace -- no network, no
+    # subprocess -- reducing reads before an edit rather than replacing them.
+    if graph:
+        tools["repo_graph"] = RepoGraphTool()
 
     # External documentation is registered only when a port exists AND the policy
     # admits the capability and operation. Absence is the safer interface: a
@@ -294,9 +303,14 @@ def context_sources_from(states: Sequence[TaskState]) -> dict[str, Any]:
     # ids, exit status -- so a report can say what was analysed and what came
     # back without carrying the analyser's output.
     analysis = [run for state in states for run in state.analysis_runs]
+    # Every graph query across every round, in order. Metadata only -- op,
+    # target, result count -- never the rendered result, matching analysis
+    # above.
+    graph_queries = [query for state in states for query in state.graph_queries]
     return {
         "test_detection": detection,
         "analysis": analysis or None,
+        "graph_queries": graph_queries or None,
         "external": external if external["events"] else None,
         "skills": {
             "advertised": list(final.advertised_skills),

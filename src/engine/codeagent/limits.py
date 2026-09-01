@@ -138,6 +138,15 @@ class Limits:
     max_testenv_files_read: int = 8
     max_testenv_file_bytes: int = 32_000
 
+    # Repository graph (C10). A deterministic AST/import scan, bounded the same
+    # way testenv detection is -- by file count and by bytes per file -- plus a
+    # ceiling on how many matches one query may render, since a graph exists to
+    # avoid reads and an unbounded answer would spend the budget it was meant
+    # to save.
+    max_graph_files_scanned: int = 3_000
+    max_graph_file_bytes: int = 300_000
+    max_graph_results: int = 30
+
     def as_dict(self) -> dict[str, object]:
         """Serializable form, for recording which limits a run executed under."""
         return dict(asdict(self))

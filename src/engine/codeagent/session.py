@@ -434,6 +434,12 @@ class CodingSession:
             self._state.analysis_runs.append(dict(analysis.as_dict()))
         self._ctx.analysis_log.clear()
 
+        # Every query is kept, unlike detection above: two lookups against two
+        # symbols are two observations. No result content -- op, target, count.
+        for query in self._ctx.graph_log:
+            self._state.graph_queries.append(asdict(query))
+        self._ctx.graph_log.clear()
+
         # A distinct name from the capability loop above: the two carry different
         # record types, and reusing one binding would let a future edit mix them.
         for external in self._ctx.external_log:

@@ -217,6 +217,10 @@ def test_serialized_state_exposes_only_observable_execution_data() -> None:
         # status, timing, counts, rule ids. No finding message and no line of
         # scanned source, for the same reason skill bodies are absent above.
         "analysis_runs",
+        # Repository graph (C10): per-query op, target and result-count
+        # metadata. No rendered result and no scanned source, for the same
+        # reason a finding message is absent above.
+        "graph_queries",
         # External capabilities (C6): counts, provenance and refusal reasons.
         # There is deliberately no field for a response body, a server, a URL
         # or a credential -- none of those is a thing this layer should be
