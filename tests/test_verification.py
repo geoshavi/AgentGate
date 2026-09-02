@@ -10,7 +10,13 @@ from engine.state import db
 from engine.state.models import EvalCaseResult, VerificationResult
 from engine.verification import pipeline, verdict
 from engine.verification.automated import _run, automated_defects, run_automated_gates
-from engine.verification.judge import _extract_json_objects, _parse_critic, run_judge_gates
+from engine.verification.judge import (
+    LENSES,
+    RESPONSE_INSTRUCTION,
+    _extract_json_objects,
+    _parse_critic,
+    run_judge_gates,
+)
 from engine.verification.schema import enforce_critic_schema
 
 
@@ -1044,3 +1050,148 @@ def test_h_a_retry_provider_error_never_becomes_a_case_level_error(
     assert status == "UNVERIFIED"
     assert merged["schema_errors"], "the first attempt's schema errors must survive"
     assert all(e.startswith("judge:correctness:") for e in merged["schema_errors"])
+
+
+# --- what a lens is actually shown, pinned ----------------------------------
+#
+# A live Debug Agent run returned UNVERIFIED on a correct, proven fix: the
+# security lens emitted a CORRECTNESS/HIGH defect asserting a bug the fixed
+# code no longer had. Diagnosis found nothing wrong with the machinery -- the
+# judges were shown the correct post-fix source -- so the payload's *content*
+# is what decided the verdict. Nothing asserted what that payload contained,
+# which is why the framing could drift without any test noticing.
+#
+# These tests pin composition only. They deliberately assert nothing about how
+# a model reacts to it: that is not knowable offline and is not what changed.
+
+
+class _CapturingProvider:
+    """Records the exact (system, messages) each lens call receives."""
+
+    name = "fake"
+
+    def __init__(self, response_text: str) -> None:
+        self._response_text = response_text
+        self.calls: list[tuple[str | None, list[Message]]] = []
+
+    def generate(
+        self,
+        messages: list[Message],
+        model: str,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+        timeout_seconds: float | None = None,
+    ) -> GenerationResult:
+        self.calls.append((system, list(messages)))
+        return GenerationResult(
+            text=self._response_text, model=model, provider=self.name, input_tokens=1, output_tokens=1
+        )
+
+
+def _capture_judge_prompts(task_text: str, code_snapshot: str) -> _CapturingProvider:
+    provider = _CapturingProvider(_ok_critic_json())
+    run_judge_gates(
+        LLMGateway(provider),
+        _budget(),
+        "claude-haiku-4-5-20251001",
+        task_text,
+        code_snapshot,
+        run_id=1,
+        task_id="task-1",
+        conn=None,
+    )
+    return provider
+
+
+def test_judge_prompt_is_exactly_task_text_then_snapshot_then_response_instruction() -> None:
+    """The whole payload, pinned character for character.
+
+    Everything a lens knows comes from this string. Anything a caller wants a
+    judge to consider must arrive inside ``task_text`` or ``code_snapshot``,
+    and this asserts there is no third channel.
+    """
+    provider = _capture_judge_prompts("TASK-MARKER", "SNAPSHOT-MARKER")
+
+    _, messages = provider.calls[0]
+    assert len(messages) == 1
+    assert messages[0].role == "user"
+    assert messages[0].content == (
+        "Task given to the coding agent:\nTASK-MARKER\n\n"
+        "Resulting code (all files concatenated):\nSNAPSHOT-MARKER" + RESPONSE_INSTRUCTION
+    )
+
+
+def test_every_lens_gets_the_identical_user_prompt_and_differs_only_by_system() -> None:
+    """One payload, three system prompts. A caller cannot address one lens."""
+    provider = _capture_judge_prompts("TASK-MARKER", "SNAPSHOT-MARKER")
+
+    assert len(provider.calls) == 3
+    prompts = {messages[0].content for _, messages in provider.calls}
+    assert len(prompts) == 1, "lenses must not receive different user prompts"
+    assert [system for system, _ in provider.calls] == list(LENSES.values())
+
+
+def test_the_judge_prompt_carries_no_conversation_history() -> None:
+    """Each lens call is a fresh single message: no earlier lens's answer, no
+    prior round, nothing carried between calls. Rules out cross-lens
+    contamination as an explanation for any one lens's finding."""
+    provider = _capture_judge_prompts("TASK-MARKER", "SNAPSHOT-MARKER")
+
+    assert all(len(messages) == 1 for _, messages in provider.calls)
+    assert all(messages[0].role == "user" for _, messages in provider.calls)
+
+
+# --- off-lens defects keep full blocking power ------------------------------
+
+
+def test_an_off_lens_high_defect_still_blocks_the_run() -> None:
+    """Pinned baseline, NOT an endorsement.
+
+    ``schema.py`` documents that a lens may honestly emit a category outside
+    its own brief, and nothing enforces category-matches-lens. The consequence
+    is that a CORRECTNESS/HIGH defect from the security lens blocks exactly as
+    a correctness-lens one would -- which is how the live false UNVERIFIED
+    became a verdict.
+
+    This test exists so that any future change to that rule is a deliberate,
+    visible break rather than a silent one. Changing it means changing verdict
+    semantics and belongs behind a benchmark measurement.
+    """
+    off_lens = json.dumps(
+        {
+            "defects": [
+                {
+                    "id": "C1",
+                    "category": "CORRECTNESS",
+                    "severity": "HIGH",
+                    "location": "cart.py:_discount",
+                    "fix": "guard the empty case",
+                }
+            ],
+            "verdict": "FAIL",
+        }
+    )
+    gateway = LLMGateway(_SequencedFakeProvider([_ok_critic_json(), off_lens, _ok_critic_json()]))
+
+    critics, schema_errors = run_judge_gates(
+        gateway,
+        _budget(),
+        "claude-haiku-4-5-20251001",
+        "do the thing",
+        "print('hi')",
+        run_id=1,
+        task_id="task-1",
+        conn=None,
+    )
+
+    assert schema_errors == []
+    emitted = [d for critic in critics for d in critic["defects"]]
+    assert len(emitted) == 1
+    # The security lens produced it, while claiming CORRECTNESS. Both facts survive.
+    assert emitted[0]["lens"] == "security"
+    assert emitted[0]["category"] == "CORRECTNESS"
+
+    merged = verdict.merge(critics, [])
+    assert merged["verdict"] == "FAIL"
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"

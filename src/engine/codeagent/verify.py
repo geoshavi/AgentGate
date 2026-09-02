@@ -83,9 +83,24 @@ _SNAPSHOT_HEADER_OVERHEAD = 12
 class SnapshotScope:
     """What verification would inline, measured before it is asked to.
 
-    ``total_bytes`` is an over-estimate for non-ASCII source (on-disk bytes vs.
-    the characters ``read_text`` yields), which is the safe direction to be
-    wrong in for a ceiling.
+    ``total_bytes`` is an estimate, and which way it errs depends on the tree.
+    Two effects pull in opposite directions:
+
+    - **Upward**, for non-ASCII source: ``st_size`` counts on-disk bytes while
+      ``read_text`` yields characters, so a multi-byte file is over-charged.
+    - **Downward**, with file count: the flat ``_SNAPSHOT_HEADER_OVERHEAD`` of
+      12 stands in for a real header of 11 plus a 2-byte join between files, so
+      for ASCII source the estimate sits ``2 - n_files`` from the payload --
+      exact at two files, and short by ``n - 2`` beyond that.
+
+    So this is *not* the unconditional over-estimate a ceiling would prefer: an
+    all-ASCII tree can pass ``within_limit`` while the real snapshot is up to
+    ``n - 2`` characters larger. The gap is bounded and small against
+    ``max_snapshot_bytes`` (200_000) -- a 3_000-file tree is under by ~3_000,
+    ~1.5% -- and it is left as it stands rather than corrected, because the
+    arithmetic is what every recorded ``snapshot_bytes`` in the run history was
+    computed with, and changing it would silently reinterpret those numbers.
+    ``tests/test_codeagent_verify.py`` pins both directions.
     """
 
     files: list[str]

@@ -205,6 +205,71 @@ def test_snapshot_scope_detects_an_oversized_workspace(tmp_path: Path) -> None:
     assert scope.total_bytes > 100
 
 
+def _write_lf(path: Path, text: str) -> None:
+    """Write with LF on disk regardless of platform.
+
+    ``Path.write_text`` translates "\\n" to os.linesep on Windows, which would
+    make st_size disagree with the character count ``read_text`` yields and
+    silently change the byte arithmetic these tests pin.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+
+
+def test_snapshot_scope_estimate_tracks_the_real_snapshot_by_a_fixed_offset(
+    tmp_path: Path,
+) -> None:
+    """``snapshot_scope`` estimates; ``read_code_snapshot`` builds the real
+    payload. For ASCII source stored with LF the two differ by exactly
+    ``2 - n_files``, because the estimator charges a flat 12 bytes of header
+    per file where the real header costs 11 plus a 2-byte join between files.
+
+    Pinned because this arithmetic is what makes a recorded ``snapshot_bytes``
+    checkable against on-disk content after the fact -- the step that ruled
+    staleness out of a live false-UNVERIFIED diagnosis.
+    """
+    workspace = ws(tmp_path)
+    for count in (1, 2, 3, 5):
+        for existing in workspace.root.rglob("*.py"):
+            existing.unlink()
+        for i in range(count):
+            _write_lf(workspace.root / f"f{i}.py", f"x{i} = {i}\n")
+
+        estimate = snapshot_scope(workspace).total_bytes
+        actual = len(read_code_snapshot(workspace.root))
+
+        assert estimate - actual == 2 - count, f"offset drifted at {count} file(s)"
+
+
+def test_snapshot_scope_under_estimates_once_three_or_more_files_are_present(
+    tmp_path: Path,
+) -> None:
+    """The direction of the error, stated explicitly.
+
+    The ceiling is not a strict over-estimate: at three files or more the
+    estimate falls below the real payload by ``n - 2`` characters, so a
+    workspace can pass ``within_limit`` while the string handed to the judges
+    is fractionally larger. Bounded and tiny (``max_graph_files_scanned`` caps
+    a realistic tree at ~3k files against a 200k limit), but real, and the
+    docstring on ``SnapshotScope`` says so rather than claiming otherwise.
+    """
+    workspace = ws(tmp_path)
+    for i in range(4):
+        _write_lf(workspace.root / f"f{i}.py", "x = 1\n")
+
+    assert snapshot_scope(workspace).total_bytes < len(read_code_snapshot(workspace.root))
+
+
+def test_a_single_non_ascii_file_still_over_estimates(tmp_path: Path) -> None:
+    """The offsetting effect the docstring describes is real, just not total:
+    one multi-byte file costs more on disk than in characters, which pushes the
+    estimate back above the payload."""
+    workspace = ws(tmp_path)
+    _write_lf(workspace.root / "u.py", '# ≤≥≤≥≤≥≤≥≤≥\nx = 1\n')
+
+    assert snapshot_scope(workspace).total_bytes > len(read_code_snapshot(workspace.root))
+
+
 # -- the pre-checks refuse rather than truncate ------------------------------
 
 
@@ -479,6 +544,29 @@ def test_the_snapshot_verification_reads_reflects_the_latest_edit(tmp_path: Path
     assert "min([])" in before
     assert "min([])" not in after
     assert "return 0.0" in after
+
+
+def test_recorded_snapshot_bytes_describe_the_post_edit_source(tmp_path: Path) -> None:
+    """The bytes a run records must identify the source the judges were shown.
+
+    ``verify_workspace`` emits ``scope.total_bytes`` and the report keeps it.
+    That number is only useful if it pins down *which* version of the tree was
+    verified -- which is precisely how a live false-UNVERIFIED was cleared of
+    staleness after the fact: the recorded count reproduced from the post-fix
+    files and could not have come from the pre-fix ones.
+    """
+    workspace = ws(tmp_path)
+    source = workspace.root / "cart.py"
+
+    _write_lf(source, "def total():\n    return min([])\n")
+    before_bytes = snapshot_scope(workspace).total_bytes
+
+    _write_lf(source, "def total():\n    return 0.0\n")
+    after_bytes = snapshot_scope(workspace).total_bytes
+
+    assert before_bytes != after_bytes, "the count must distinguish the two versions"
+    # One file: the estimate sits exactly one character above the real payload.
+    assert after_bytes - len(read_code_snapshot(workspace.root)) == 1
 
 
 def test_extra_defect_keys_never_reach_the_agent_or_the_report(tmp_path: Path) -> None:

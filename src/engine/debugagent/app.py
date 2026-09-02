@@ -418,10 +418,30 @@ def _verification_task(task_text: str, repro: FrozenRepro, suite: FrozenRepro) -
     cause is deliberately withheld: handing three judges the fixing agent's own
     explanation invites them to review the explanation instead of the diff, and
     AgentGate's job is to look at the code with fresh eyes.
+
+    The report is **labelled as history rather than trusted as description.** A
+    bug report is written in the present tense about code that no longer exists,
+    and a live run showed what that costs: a lens read the reported symptom as a
+    claim about the source in front of it and re-reported an already-fixed bug
+    as a blocking defect, on a fix the proof gate had already exercised. The
+    report is still the clearest statement of what the change was *for*, so it
+    stays -- timestamped, with the code named as the only evidence of the
+    present.
+
+    What this deliberately does **not** carry is whether the fix worked. By the
+    time this is built the harness holds both exit codes, and passing them on
+    would anchor the judges toward OK -- the false_pass direction, which is the
+    failure this layer exists to prevent. AgentGate is asked to read code, not
+    to ratify a result already in hand.
     """
     return (
         f"Debug task -- fix a reported failure.\n\n"
-        f"REPORTED BUG\n{task_text.strip()}\n\n"
+        f"REPORTED BUG -- PRE-FIX HISTORY\n"
+        f"The report below describes the failure as it was observed BEFORE the "
+        f"change under review. It records why the change was made; it is not a "
+        f"finding about the code that follows. Treat the code itself as the only "
+        f"evidence of what is true now.\n\n"
+        f"{task_text.strip()}\n\n"
         f"REPRODUCTION COMMAND\n{repro.display()}\n"
         f"REGRESSION SUITE\n{suite.display()}"
     )

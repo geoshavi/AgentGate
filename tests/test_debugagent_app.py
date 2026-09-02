@@ -758,3 +758,61 @@ def test_the_fix_may_not_change_a_fourth_file(tmp_path: Path) -> None:
 
     assert len(result.report.observed.files_changed) <= 2
     assert result.report.status != SessionStatus.PASSED.value
+
+
+# -- what AgentGate is told the change was for -------------------------------
+#
+# A live run returned UNVERIFIED on a correct, proven fix: a lens read the
+# REPORTED BUG as a description of the code in front of it rather than of the
+# failure that prompted the change, and reported the already-fixed bug as
+# present. The report is genuinely useful context -- it says what the change
+# was meant to achieve -- so the fix is to timestamp it, not to remove it.
+
+
+def _task_for(bug: str = BUG) -> str:
+    from engine.debugagent.app import _verification_task
+    from engine.debugagent.repro import FrozenRepro
+
+    return _verification_task(bug, FrozenRepro(tuple(REPRO)), FrozenRepro(tuple(SUITE)))
+
+
+def test_the_reported_bug_is_marked_as_pre_fix_history() -> None:
+    """The judges must be able to tell a symptom from a finding.
+
+    Without this the bug report reads as a present-tense claim about the code
+    being reviewed, and a lens that believes it will report the fixed bug.
+    """
+    task = _task_for()
+
+    assert "BEFORE" in task
+    assert "pre-fix" in task.lower()
+    assert BUG.strip() in task, "the report itself must still be carried, only re-labelled"
+
+
+def test_the_verification_task_states_no_outcome_of_the_fix() -> None:
+    """Framing only -- never a conclusion.
+
+    Telling the judges the reproduction now passes would anchor them toward
+    OK, which is the false_pass direction and the dangerous one. AgentGate is
+    asked to read the code, not to ratify a result the harness already has.
+    """
+    task = _task_for().lower()
+
+    for banned in ("proven", "passes", "passed", "green", "exit 0", "succeeded", "verified"):
+        assert banned not in task, f"verification framing must not assert an outcome: {banned!r}"
+
+
+def test_the_verification_task_still_withholds_the_models_root_cause() -> None:
+    """Unchanged property: three judges reviewing with fresh eyes, not marking
+    the fixing agent's own homework."""
+    task = _task_for()
+
+    assert "root cause" not in task.lower()
+    assert "mechanism" not in task.lower()
+
+
+def test_the_verification_task_still_carries_both_frozen_commands() -> None:
+    task = _task_for()
+
+    assert " ".join(REPRO) in task
+    assert " ".join(SUITE) in task
