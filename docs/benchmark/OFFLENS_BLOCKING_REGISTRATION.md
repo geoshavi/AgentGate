@@ -217,3 +217,104 @@ paid run is a stock `engine bench`.
 - v4 currently has n=1, so no v4 dispersion estimate exists yet. Any sigma applied before
   stage 2 completes is carried over from the v3 `c0515eb`/`be990c7` clusters and must be
   labelled as such.
+
+---
+
+# Amendment 1 — 2026-09-02
+
+Registered after the first stage-1 attempt aborted and **before any A/B contrast was
+observed.** That ordering is what makes this amendment legitimate: run 43 produced no
+scoreable result, so nothing here is a decision rule retrofitted to an outcome.
+
+**Sections 2, 3, 4 and 5 are unchanged** — the candidate rule, the paired method, the
+metrics and guardrails, and the ACCEPT/REJECT criteria all stand exactly as registered.
+This amendment corrects factual premises only: sections 6 and 7.
+
+## A1.1 — Void run: eval_run 43
+
+The stage-1 attempt was killed by a 10-minute harness timeout partway through.
+
+| | |
+|---|---|
+| `eval_runs.id` | 43 |
+| `git_commit_sha` | `e002b6b25cad0d8128ec258a89651feaf82e3aa2` |
+| cases written | 35 of 40 |
+| lens calls | 108 of 120 |
+| spend | $0.5133 |
+| `total_cases` recorded | **0** — the aggregate update never ran |
+| `runs.id` 52 | left at `status = 'running'` |
+
+**Run 43 is VOID and must never be scored or averaged.** It fails the section 3 integrity
+gate (incomplete case set, no final aggregate). Its row is retained rather than deleted
+because `.engine/state.db` is append-only and unbacked-up; it is documented here instead.
+
+**Read the `total_cases = 0` with care.** This is the same shape as run 1, the denominator
+trap described in the schema reference: a row whose numerator was never populated is not a
+0/40 result.
+
+## A1.2 — Corrected cost basis (supersedes section 6)
+
+Section 6 estimated ~$0.14/run from run 42's recorded $0.1302. **That basis was wrong**: it
+did not account for the judge model differing between run 42 and HEAD.
+
+| | judge model | calls | spend | avg output tokens | avg latency |
+|---|---|---|---|---|---|
+| runs 37-42 | `claude-haiku-4-5-20251001` | 120 | ~$0.12 | 123-134 | ~1.6 s |
+| run 43 | `claude-sonnet-5` | 108 | $0.5133 | 355 (cap 1600, reached) | 5.2 s |
+
+Measured at HEAD: **~$0.57 per run, ~10.3 minutes per run** — roughly 4.4x the cost and 3x
+the wall time. Sonnet 5 prices at 2x Haiku and emits ~2.8x the output tokens because it
+thinks adaptively, the behaviour `judge.py`'s Phase 9C/9E comments already document.
+
+The 8-run plan therefore costs **~$4.56**, not ~$1.12, exceeding the registered $2.00
+ceiling. **The stage plan and the $2.00 ceiling in section 6 are SUSPENDED** pending the
+open decision in A1.4. No further paid run is authorised under this registration until
+that decision is recorded here.
+
+## A1.3 — Comparability break (qualifies section 7)
+
+Commit **`83a4000` "Experiment: upgrade judge to Sonnet 5"** changed
+`DEFAULT_MODELS["anthropic"]["judge"]` from `claude-haiku-4-5-20251001` to
+`claude-sonnet-5`. Every recorded benchmark run, 1 through 42, used Haiku. Run 43 was the
+first attempt at Sonnet.
+
+The judge model is part of the measured configuration, so:
+
+- **v4 holds zero completed runs at the current configuration.** Run 42 is not a baseline
+  for HEAD. This is the *second* independent reason — the first, found earlier, is the
+  89-line `judge.py` Phase 9C/9E delta between `c2ec1e4` and HEAD.
+- **Section 7's prior evidence is Haiku-derived.** The off-lens emission rates (security
+  31.0%, code-quality 27.0%, correctness 6.4%), the 6/961 sole-blocker figure, and the
+  0/539 flip record all describe *Haiku's* behaviour. Sonnet's rates may differ
+  materially, and run 43's much larger output volume is direct evidence its defect
+  behaviour is not Haiku's.
+
+**What survives the model change unaffected**, because none of it depends on model
+behaviour: the monotonicity claim (section 2, result 1), the R-a/R-b dominance claim
+(section 2, result 2), and the offline reconstruction method (section 3), whose validation
+was a property of the stored-data arithmetic rather than of any model.
+
+## A1.4 — Open decision, deliberately not made here
+
+Which judge model this experiment runs on is now a real fork and is left to the operator:
+
+- **Sonnet 5** — tests the configuration the branch actually uses, at ~$4.56 for 8 runs,
+  compared against zero historical runs.
+- **Haiku 4.5** — comparable with runs 13-42 at ~$1.00 for 8 runs, but tests a
+  configuration the branch appears to have moved away from deliberately.
+
+Whichever is chosen must be recorded as a further amendment **before** the run, and the
+prior evidence in section 7 may only be cited as a prior for the Haiku configuration.
+
+## A1.5 — Governance finding
+
+`src/engine/config.py`'s `DEFAULT_MODELS[...]["judge"]` selects the model every judge lens
+runs on. It is as decisive for the measured configuration as `judge.py`'s prompts, yet it
+is **not** in the `git-safety` measured-path list. It could therefore be changed without
+the explicit approval that list exists to require, and doing so started a new
+configuration cluster with no run recorded and no note in `BASELINE.md`.
+
+Recommendation, for a separate decision: add `src/engine/config.py` (or at minimum
+`DEFAULT_MODELS`) to the measured-path list, and record run 43 plus the Haiku-to-Sonnet
+switch in `BASELINE.md`, so a later reader does not mistake the model change for noise or
+read run 43's empty row as a result.
