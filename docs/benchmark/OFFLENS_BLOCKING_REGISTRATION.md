@@ -318,3 +318,85 @@ Recommendation, for a separate decision: add `src/engine/config.py` (or at minim
 `DEFAULT_MODELS`) to the measured-path list, and record run 43 plus the Haiku-to-Sonnet
 switch in `BASELINE.md`, so a later reader does not mistake the model change for noise or
 read run 43's empty row as a result.
+
+---
+
+# Amendment 2 — 2026-09-02
+
+Resolves the open decision left by A1.4. Registered **before any A/B contrast has been
+observed** — run 43 was void and produced no scoreable result, so nothing here is fitted
+to an outcome.
+
+**Sections 2, 3, 4 and 5 remain unchanged.** The candidate rule (R-a), the paired offline
+scoring method, the metrics and named guardrails, and the ACCEPT/REJECT criteria are
+exactly as first registered. Amendment 2 settles the judge model and re-authorises a
+single run; it moves no decision rule.
+
+## A2.1 — Judge model: Sonnet 5
+
+The experiment runs on **`claude-sonnet-5`**, the judge configured at HEAD by `83a4000`,
+because that is the current production judge configuration and the rule must be evaluated
+against the configuration it would ship into. `DEFAULT_MODELS` is **not** modified for
+this experiment — reverting the judge to Haiku for measurement convenience would test a
+configuration the branch has deliberately left.
+
+## A2.2 — Status of the Haiku evidence
+
+Every figure in section 7 — off-lens emission rates (security 31.0%, code-quality 27.0%,
+correctness 6.4%), the 6/961 sole-blocker count, the 0/539 broken-case flip record, and
+the 55%-rest-on-one-blocker margin — was measured on `claude-haiku-4-5-20251001` across
+runs 13-42.
+
+**That evidence is a PRIOR only. It is not a baseline and is not a control arm.** No Haiku
+run may be used as the comparison arm for any Sonnet run, and no Haiku-derived rate may be
+quoted as an expectation for Sonnet without saying which model produced it. Sonnet emits
+~2.8x the output tokens per lens call, which is direct evidence its defect behaviour
+differs; whether its *off-lens* behaviour differs is unmeasured.
+
+What remains valid independent of model, because none of it depends on model behaviour:
+the monotonicity result, the R-a/R-b dominance result, and the offline reconstruction
+method.
+
+## A2.3 — Authorised work: Run 1 only
+
+**Authorised: exactly ONE complete `engine bench` run at HEAD on the Sonnet judge.**
+
+| | |
+|---|---|
+| runs authorised | 1 |
+| lens calls | 120 (40 cases x 3 lenses) |
+| estimated cost | ~$0.57 |
+| estimated wall time | ~10.3 min |
+| hard ceiling for this run | $1.00 |
+
+Superseding the suspended section 6 plan: **runs 2-8 are NOT authorised.** The stage-2
+extension rule registered in section 6 is void and is replaced by A2.5.
+
+**Operational requirement, from run 43's failure.** The run must be given wall-clock
+headroom well beyond ~10.3 minutes and must not be executed under a shorter harness
+timeout. A run killed mid-flight is void under the section 3 integrity gate, spends money,
+and leaves an unusable partial row in an append-only database.
+
+## A2.4 — Decision criteria for Run 1 (restated, unchanged)
+
+- **Hard REJECT:** any broken case (`expected_verdict = UNVERIFIED`) that blocks under
+  Arm A and returns OK under Arm B. One occurrence rejects the candidate rule outright.
+- **Integrity gate (section 3) must pass** or the run is void and is not scored: zero
+  error rows, 120/120 `call_status = ok`, all automated gates passed, and an exact
+  reconstruction of Arm A verdicts from stored defects.
+- `security-03-clean` and all 20 broken cases remain the named guardrails.
+
+A single run cannot ACCEPT the rule. ACCEPT requires the full sample registered in
+section 5, which is not authorised here.
+
+## A2.5 — After Run 1: stop
+
+Run 1 authorises **nothing further**. On completion — pass, reject or void — work stops
+and the result is reported for re-confirmation. Any subsequent run requires a further
+amendment recording the sample size and its cost basis at Sonnet prices, since the
+original 8-run plan's arithmetic (~$1.12) no longer holds at ~$0.57/run (~$4.56).
+
+Run 1's second function is to give the Sonnet configuration its **first completed run**;
+v4 at this judge currently holds none. One run yields no dispersion estimate, and no sigma
+may be attributed to this configuration until a cluster exists. Any sigma quoted before
+then is carried over from the v3 Haiku clusters and must be labelled as such.
