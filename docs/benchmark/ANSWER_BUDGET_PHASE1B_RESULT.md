@@ -83,9 +83,17 @@ Contamination Set failures produced substantial answer text before failing.
   correctness`.
 - **Rows 3, 5 — verdict/severity schema inconsistency (mechanism C)**, on
   `quality-04-broken`, now observed on *both* lenses (code-quality and correctness) rather
-  than code-quality only. Each raw response is complete, balanced JSON with only
-  MEDIUM/LOW-severity defects and `verdict: "FAIL"`, which `enforce_critic_schema` rejects
-  because no CRITICAL/HIGH defect justifies a FAIL verdict.
+  than code-quality only. Each of these two raw responses is complete, balanced JSON with
+  only MEDIUM/LOW-severity defects and `verdict: "FAIL"`, which `enforce_critic_schema`
+  rejects because no CRITICAL/HIGH defect justifies a FAIL verdict.
+
+  **This is not evidence of a fixed MEDIUM severity ceiling on this case.** The stored
+  Sonnet-era record (runs 43-44, outside this batch) shows `quality-04-broken`'s single
+  genuine defect landing at HIGH on `code-quality` in both stored runs, and flipping
+  MEDIUM→HIGH on `correctness` across byte-identical input. The defect sits **astride the
+  MEDIUM↔HIGH boundary** rather than under a ceiling, and the schema-inconsistency
+  mechanism is that severity is drawn from both sides of that boundary across calls, not
+  that this case is incapable of producing a blocking defect.
 
 **No new mechanism. No Class X.** Phase 1B's five failures are the same two documented
 mechanisms as Phase 1's three, spread from one lens to both lenses on each of the same two
@@ -115,6 +123,18 @@ per-cell under-declared the two `quality-04-broken` cells by roughly one order o
 magnitude, and the recalibrated Poisson-binomial false-void probability on a healthy batch
 rises from the designed 0.039 to approximately 0.47 under pooled per-cell rates — close to
 Phase 1's own 0.468 false-void rate under its since-replaced pooled threshold.
+
+**Mechanism, stated precisely:** `quality-04-broken`'s elevated semantic-failure rate is
+not caused by its genuine defect having a low severity ceiling. A subsequent stored-history
+check (runs 18-44) found the defect's severity **straddles the MEDIUM↔HIGH blocking
+boundary** — HIGH in both stored Sonnet `code-quality` runs, and flipping MEDIUM→HIGH
+across identical input on `correctness` — with the non-blocking side appearing in roughly a
+third of historical `code-quality` observations at the prior judge model on identical case
+content. A verdict/severity schema failure occurs whenever a call happens to land on the
+non-blocking side while the model still writes `FAIL` (as here), or on the blocking side
+while it writes `OK` (the historical failure mode on `correctness`). The earlier framing of
+this case as having a fixed low-severity ceiling is corrected here; it is a boundary case in
+both directions, not a capped one.
 
 This is recorded as a defect in the nuisance model for a successor to fix. It is not a
 retrofit of Phase 1B's own X = 5 outcome, which stands as VOID under the rule as

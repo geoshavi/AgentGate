@@ -57,6 +57,15 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint.per-file-ignores]
+# Preserved as the byte-identical executed original that produced
+# experiments/answer_budget/phase1b_batch.jsonl (see
+# docs/benchmark/ANSWER_BUDGET_PHASE1B_RESULT.md section 5) -- editing it to
+# satisfy a rule enabled after it ran would break that provenance guarantee.
+# RUF100 fires because the repo's enabled rule set no longer includes E402,
+# making the file's own `# noqa: E402` suppressions themselves the lint hit.
+"experiments/answer_budget/phase1b_batch.py" = ["RUF100"]
+
 [tool.mypy]
 # Scope is src/ only, matching every prior phase's reported baseline (46
 # source files, clean as of Phase 2.1). tests/ is intentionally excluded:
