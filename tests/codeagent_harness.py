@@ -48,6 +48,7 @@ class ScriptedProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         self.calls += 1
         self.seen_messages.append(list(messages))
@@ -167,6 +168,7 @@ class DebugScenarioProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         self.seen_systems.append(system)
         self.seen_messages.append(list(messages))
@@ -238,6 +240,7 @@ class ScenarioProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         self.seen_systems.append(system)
         self.seen_messages.append(list(messages))

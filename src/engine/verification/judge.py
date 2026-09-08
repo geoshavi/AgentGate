@@ -149,10 +149,13 @@ def run_judge_gates(
         # critics plus a per-lens error marker instead of raising) is
         # future work: it would change what gate() sees when a lens fails,
         # which is a verdict-semantics decision, not an observability one.
-        def ask(agent_name: str, lens_system: str = lens_system) -> GenerationResult:
+        def ask(
+            agent_name: str, *, thinking_disabled: bool = False, lens_system: str = lens_system
+        ) -> GenerationResult:
             """One lens call. The retry passes the identical arguments -- same
             prompt, system, cap, model and sampling -- so the only thing that
-            differs between attempts is the provider's own sampling."""
+            differs between attempts is the provider's own sampling (and, on
+            the retry only, ``thinking_disabled``; see Answer-Budget Phase 2)."""
             return gateway.generate(
                 budget=budget,
                 messages=[
@@ -179,6 +182,7 @@ def run_judge_gates(
                 task_id=task_id,
                 conn=conn,
                 timeout_seconds=timeout_seconds,
+                thinking_disabled=thinking_disabled,
             )
 
         response = ask(f"judge:{lens_name}")
@@ -191,7 +195,7 @@ def run_judge_gates(
         if errors and response.stop_reason == _BUDGET_EXHAUSTED:
             for _ in range(MAX_JUDGE_RETRIES):
                 try:
-                    retried = ask(f"judge:{lens_name}:retry")
+                    retried = ask(f"judge:{lens_name}:retry", thinking_disabled=True)
                 except Exception:  # noqa: BLE001 - see below
                     # A retry is a bonus attempt: if it cannot be made at all,
                     # keep the first attempt's schema errors so the run lands

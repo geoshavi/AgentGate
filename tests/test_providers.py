@@ -112,6 +112,51 @@ def test_anthropic_provider_handles_a_response_with_no_thinking_details() -> Non
         assert result.thinking_tokens == 0
 
 
+def test_anthropic_provider_omits_thinking_field_by_default() -> None:
+    """P1/P9 (Answer-Budget Phase 2). The default request -- every call
+    before this parameter existed, and every first-attempt judge call after
+    it -- must send no `thinking` field at all. `omit`, not `None` and not
+    `NOT_GIVEN`, is the SDK's own default for `thinking`
+    (`ThinkingConfigParam | Omit`); passing anything else would add a field
+    that was never on the wire before."""
+    from anthropic import omit
+
+    with patch("engine.providers.anthropic_provider.Anthropic") as MockAnthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _fake_anthropic_response("hello")
+        MockAnthropic.return_value = mock_client
+
+        from engine.providers.anthropic_provider import AnthropicProvider
+
+        AnthropicProvider(api_key="fake-key").generate(
+            messages=[Message(role="user", content="hi")], model="claude-sonnet-5"
+        )
+
+        sent_thinking = mock_client.messages.create.call_args.kwargs["thinking"]
+        assert sent_thinking is omit
+
+
+def test_anthropic_provider_sends_disabled_thinking_when_requested() -> None:
+    """P9. The one call site that ever passes thinking_disabled=True (the
+    judge's truncation retry) must reach the wire as exactly the registered
+    literal, `{"type": "disabled"}` -- nothing else."""
+    with patch("engine.providers.anthropic_provider.Anthropic") as MockAnthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _fake_anthropic_response("hello")
+        MockAnthropic.return_value = mock_client
+
+        from engine.providers.anthropic_provider import AnthropicProvider
+
+        AnthropicProvider(api_key="fake-key").generate(
+            messages=[Message(role="user", content="hi")],
+            model="claude-sonnet-5",
+            thinking_disabled=True,
+        )
+
+        sent_thinking = mock_client.messages.create.call_args.kwargs["thinking"]
+        assert sent_thinking == {"type": "disabled"}
+
+
 def test_build_provider_missing_key_raises() -> None:
     config = _config(anthropic_api_key=None)
     with pytest.raises(ValueError):

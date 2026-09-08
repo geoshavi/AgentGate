@@ -28,4 +28,5 @@ class Provider(Protocol):
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult: ...

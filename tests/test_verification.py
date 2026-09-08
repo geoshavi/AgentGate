@@ -86,6 +86,7 @@ class _FakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         return GenerationResult(
             text=self._response_text,
@@ -280,6 +281,7 @@ class _SequencedFakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         text = self._responses[self._calls]
         self._calls += 1
@@ -745,6 +747,7 @@ class _SequencedProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         self.calls.append((system, max_tokens))
         if self._queued:
@@ -931,7 +934,14 @@ def test_i_retry_repeats_every_call_argument_except_the_agent_label() -> None:
     """Invariant I. The 9E suite compared only (system, max_tokens) at the
     provider boundary. This compares the whole gateway keyword set, so a future
     edit that varied the model, the user prompt, the timeout or the run/task
-    attribution on the second attempt would fail here."""
+    attribution on the second attempt would fail here.
+
+    Answer-Budget Phase 2 (P4/P6): the retry now also differs by
+    ``thinking_disabled``, and only by that plus the label. The assertion
+    stays an exact set equality over the full keyword set -- an edit that
+    additionally varied the model, prompt, cap, timeout or attribution on the
+    second attempt still fails here -- and both directions of the new field
+    are pinned explicitly."""
     gateway = _RecordingGateway(_SequencedProvider([("half a json {", _TRUNCATED)]))
     _run_lenses_recording(gateway, timeout_seconds=31.5)
 
@@ -941,7 +951,11 @@ def test_i_retry_repeats_every_call_argument_except_the_agent_label() -> None:
     assert retry["agent_name"] == "judge:correctness:retry"
 
     differing = {k for k in initial if initial[k] != retry[k]}
-    assert differing == {"agent_name"}, f"retry must differ only by its label, got {differing}"
+    assert differing == {"agent_name", "thinking_disabled"}, (
+        f"retry must differ only by its label and thinking_disabled, got {differing}"
+    )
+    assert initial["thinking_disabled"] is False
+    assert retry["thinking_disabled"] is True
 
     # Spelled out as well, so a failure names the field rather than a set diff.
     assert retry["model"] == initial["model"] == _PRICED_MODEL
@@ -1036,6 +1050,33 @@ def test_j_a_rescued_critic_changes_what_gate_sees_never_how_gate_decides(
     assert verdict.gate(clean_merged, True, []) == "OK"
 
 
+def test_p8_rescuing_a_schema_error_can_only_move_a_verdict_toward_ok() -> None:
+    """P8 -- verdict monotonicity (Answer-Budget Phase 2 registration §2.2).
+
+    The only transition a rescued retry can ever cause is schema_errors going
+    from non-empty to empty for one lens; a lens whose first attempt already
+    parsed is never retried (P2/P3, tests test_a/test_g/test_h and
+    test_unparseable_response_that_completed_normally_is_not_retried). gate()'s
+    own first branch makes a non-empty schema_errors list unconditionally
+    UNVERIFIED regardless of the other two arguments -- so the state a rescue
+    starts from is always UNVERIFIED, never OK, for every automated_passed /
+    merged-defects combination gate() branches on. Rescuing can therefore only
+    hold a case at UNVERIFIED or promote it to OK; there is no configuration
+    of gate()'s inputs from which removing a schema error could turn a
+    passing verdict into a failing one.
+    """
+    schema_errors = ["response did not contain a JSON object"]
+    clean_merged = {"defects": []}
+    blocking_merged = {"defects": [{"id": "C1", "severity": "HIGH"}]}
+
+    for merged in (clean_merged, blocking_merged):
+        for automated_passed in (True, False):
+            with_error = verdict.gate(merged, automated_passed, schema_errors)
+            without_error = verdict.gate(merged, automated_passed, [])
+            assert with_error == "UNVERIFIED", "a schema error must fail closed regardless of merged/automated_passed"
+            assert without_error in ("OK", "UNVERIFIED")
+
+
 def test_h_a_retry_provider_error_never_becomes_a_case_level_error(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1082,6 +1123,7 @@ class _CapturingProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         self.calls.append((system, list(messages)))
         return GenerationResult(

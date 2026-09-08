@@ -63,6 +63,7 @@ class LLMGateway:
         conn: sqlite3.Connection | None = None,
         run_id: int | None = None,
         task_id: str | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         if conn is not None and (run_id is None or task_id is None):
             raise ValueError("conn was provided but run_id/task_id were not -- metrics would be unattributable")
@@ -78,6 +79,7 @@ class LLMGateway:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 timeout_seconds=timeout_seconds,
+                thinking_disabled=thinking_disabled,
             )
         except Exception as exc:
             self._record_metric(

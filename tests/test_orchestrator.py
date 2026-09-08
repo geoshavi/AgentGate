@@ -63,6 +63,7 @@ class _FakeProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         return GenerationResult(
             text=self._response_text, model=model, provider=self.name, input_tokens=1, output_tokens=1
@@ -141,6 +142,7 @@ def test_run_task_resets_workspace_between_attempts(monkeypatch, tmp_path: Path)
             max_tokens: int = 4096,
             temperature: float = 0.0,
             timeout_seconds: float | None = None,
+            thinking_disabled: bool = False,
         ) -> GenerationResult:
             text = f"FILE: file_{self.calls}.py\n```\nx = {self.calls}\n```\n"
             self.calls += 1
