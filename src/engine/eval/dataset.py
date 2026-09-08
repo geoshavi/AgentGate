@@ -31,7 +31,7 @@ from dataclasses import dataclass, replace
 
 BENCHMARK_NAME = "engine-review-benchmark"
 BENCHMARK_VERSION = "v2"
-DATASET_VERSION = "v5"
+DATASET_VERSION = "v6"
 
 # Benchmark v1 remains constructible from this module -- see TASKS_V1 / CASES_V1 at the
 # bottom, which hold the pre-v2 form of every task v2 changed. Runs recorded under
@@ -245,6 +245,7 @@ TASKS: list[EvalTask] = [
                 "import re\n"
                 "import subprocess\n\n"
                 "_CONVERTER_PATH = \"/usr/bin/convert\"\n"
+                "_WORKING_DIR = \"/srv/app/images\"\n"
                 "_SAFE_FILENAME = re.compile(r\"[A-Za-z0-9][A-Za-z0-9_.-]*\")\n\n\n"
                 "def convert_to_png(filename: str) -> None:\n"
                 "    if \"..\" in filename or _SAFE_FILENAME.fullmatch(filename) is None:\n"
@@ -252,6 +253,7 @@ TASKS: list[EvalTask] = [
                 "    try:\n"
                 "        subprocess.run(\n"
                 "            [_CONVERTER_PATH, filename, f\"{filename}.png\"],\n"
+                "            cwd=_WORKING_DIR,\n"
                 "            check=True,\n"
                 "        )\n"
                 "    except subprocess.CalledProcessError as exc:\n"
