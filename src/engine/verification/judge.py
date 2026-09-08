@@ -198,13 +198,19 @@ def run_judge_gates(
                     retried = ask(f"judge:{lens_name}:retry", thinking_disabled=True)
                 except Exception:  # noqa: BLE001 - see below
                     # A retry is a bonus attempt: if it cannot be made at all,
-                    # keep the first attempt's schema errors so the run lands
+                    # keep the first attempt's response/errors so the run lands
                     # exactly where it would have with no retry, rather than
                     # converting a fail-closed lens into a failed case.
                     break
-                retry_critic, retry_errors = _parse_critic(retried.text)
-                if not retry_errors:
-                    critic, errors = retry_critic, retry_errors
+                # Once a retry is actually made, it becomes the response of
+                # record for logging/diagnostics regardless of outcome -- a
+                # retry that itself fails to parse must not leave the initial
+                # (possibly truncated/empty) response and its error
+                # misattributed to it. `errors` is non-empty either way, so
+                # the fail-closed decision below is unaffected; only what
+                # gets persisted on failure changes.
+                response = retried
+                critic, errors = _parse_critic(retried.text)
                 break
 
         if errors:

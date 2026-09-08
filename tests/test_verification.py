@@ -834,6 +834,76 @@ def test_e_retry_returning_malformed_schema_fails_closed() -> None:
     assert len(critics) == 2
 
 
+def test_retry_attribution_prose_response_logs_the_retrys_own_text() -> None:
+    """A retry that completes normally (end_turn) but answers in prose --
+    non-empty, still unparseable -- must have ITS OWN text and error
+    persisted, not the initial (truncated, empty) attempt's. Reproduces the
+    exact security-02-clean x security run-47/48 forensic shape: initial
+    max_tokens with a zero-length answer, retry end_turn with real content
+    that still contains no JSON object."""
+    gateway = LLMGateway(_SequencedProvider([("", _TRUNCATED), ("I cannot form a conclusion here.", _COMPLETE)]))
+    captured: list[tuple[str, str, list[str]]] = []
+
+    critics, schema_errors = run_judge_gates(
+        gateway,
+        _budget(),
+        _PRICED_MODEL,
+        "do the thing",
+        "print('hi')",
+        run_id=1,
+        task_id="task-1",
+        conn=None,
+        on_schema_failure=lambda lens, text, errs: captured.append((lens, text, errs)),
+    )
+
+    assert len(critics) == 2, "the retried lens contributes no critic -- fails closed"
+    assert any(e.startswith("judge:correctness:") for e in schema_errors)
+    assert len(captured) == 1
+    lens, raw_response, errors = captured[0]
+    assert lens == "correctness"
+    assert raw_response == "I cannot form a conclusion here.", (
+        "must log the RETRY's text, not the initial empty attempt's"
+    )
+    assert raw_response != "", "the initial (empty) response must not be what gets persisted"
+    assert errors
+
+
+def test_retry_attribution_schema_invalid_json_logs_the_retrys_own_error() -> None:
+    """A retry that completes with a well-formed but schema-invalid JSON
+    critic must have that critic's own validation error persisted -- not
+    the initial attempt's 'no JSON object' error, which describes a
+    completely different failure."""
+    malformed_retry = json.dumps({"defects": [], "verdict": "MAYBE"})
+    gateway = LLMGateway(
+        _SequencedProvider([("", _TRUNCATED), (malformed_retry, _COMPLETE)])
+    )
+    captured: list[tuple[str, str, list[str]]] = []
+
+    critics, schema_errors = run_judge_gates(
+        gateway,
+        _budget(),
+        _PRICED_MODEL,
+        "do the thing",
+        "print('hi')",
+        run_id=1,
+        task_id="task-1",
+        conn=None,
+        on_schema_failure=lambda lens, text, errs: captured.append((lens, text, errs)),
+    )
+
+    assert len(critics) == 2, "the retried lens contributes no critic -- fails closed"
+    assert any(e.startswith("judge:correctness:") for e in schema_errors)
+    assert len(captured) == 1
+    lens, raw_response, errors = captured[0]
+    assert lens == "correctness"
+    assert raw_response == malformed_retry, "must log the retry's actual JSON, not the initial empty text"
+    assert not any("did not contain a JSON object" in e for e in errors), (
+        "the persisted error must describe the RETRY's own (schema/verdict) "
+        "failure, not the initial attempt's (missing-JSON) failure"
+    )
+    assert any("verdict" in e for e in errors)
+
+
 def test_f_provider_error_on_the_retry_falls_back_to_fail_closed() -> None:
     """A retry is a bonus attempt. If it cannot be made at all, the run must
     land exactly where it would have landed without the retry -- never worse."""
