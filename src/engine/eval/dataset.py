@@ -31,7 +31,7 @@ from dataclasses import dataclass, replace
 
 BENCHMARK_NAME = "engine-review-benchmark"
 BENCHMARK_VERSION = "v2"
-DATASET_VERSION = "v4"
+DATASET_VERSION = "v5"
 
 # Benchmark v1 remains constructible from this module -- see TASKS_V1 / CASES_V1 at the
 # bottom, which hold the pre-v2 form of every task v2 changed. Runs recorded under
@@ -113,8 +113,10 @@ TASKS: list[EvalTask] = [
         },
         clean_files={
             "solution.py": (
+                "from decimal import Decimal\n\n\n"
                 "def is_close_enough(a: float, b: float) -> bool:\n"
-                "    return abs(a - b) < 0.01\n"
+                "    diff = abs(Decimal(str(a)) - Decimal(str(b)))\n"
+                "    return diff < Decimal(\"0.01\")\n"
             )
         },
     ),
@@ -220,8 +222,15 @@ TASKS: list[EvalTask] = [
         task_id="security-02",
         category="security",
         task_text=(
-            "Implement convert_to_png(filename) that shells out to an image converter to "
-            "produce filename + '.png'."
+            "Implement convert_to_png(filename) that converts an existing image in a fixed "
+            "application-owned working directory to filename + '.png' in that directory, "
+            "using a trusted external image converter. filename is untrusted: accept only "
+            "ASCII basenames matching [A-Za-z0-9][A-Za-z0-9_.-]* with no '..' substring, and "
+            "reject anything else with ValueError before invoking any process -- no directory "
+            "paths, leading options, whitespace, shell metacharacters, or other special "
+            "syntax. Invoke the converter through a fixed absolute executable path with the "
+            "input and output as separate literal filename arguments and no shell evaluation; "
+            "report a conversion failure to the caller without retrying through a shell."
         ),
         expected_defect_category="SECURITY",
         broken_files={
@@ -233,12 +242,18 @@ TASKS: list[EvalTask] = [
         },
         clean_files={
             "solution.py": (
-                "import subprocess\n\n\n"
+                "import re\n"
+                "import subprocess\n\n"
+                "_CONVERTER_PATH = \"/usr/bin/convert\"\n"
+                "_SAFE_FILENAME = re.compile(r\"[A-Za-z0-9][A-Za-z0-9_.-]*\")\n\n\n"
                 "def convert_to_png(filename: str) -> None:\n"
-                "    if not filename or \"..\" in filename or \"/\" in filename:\n"
-                "        raise ValueError(\"invalid filename\")\n"
+                "    if \"..\" in filename or _SAFE_FILENAME.fullmatch(filename) is None:\n"
+                "        raise ValueError(f\"invalid filename: {filename!r}\")\n"
                 "    try:\n"
-                "        subprocess.run([\"convert\", filename, f\"{filename}.png\"], check=True)\n"
+                "        subprocess.run(\n"
+                "            [_CONVERTER_PATH, filename, f\"{filename}.png\"],\n"
+                "            check=True,\n"
+                "        )\n"
                 "    except subprocess.CalledProcessError as exc:\n"
                 "        raise RuntimeError(f\"image conversion failed for {filename!r}\") from exc\n"
             )
