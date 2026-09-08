@@ -42,6 +42,25 @@ RESPONSE_INSTRUCTION = (
     "category must be exactly one of CORRECTNESS, SECURITY, or CODE-QUALITY — use the "
     "closest match, never invent a more specific label. "
     "Return {\"defects\": [], \"verdict\": \"OK\"} if you find nothing to flag."
+    # Grounded-severity ceiling, appended verbatim per
+    # docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 3. It constrains
+    # what severity a finding may claim; it never suppresses one. Reporting is explicitly
+    # unaffected, so a concern that cannot ground a blocking claim still reaches defects at
+    # MEDIUM rather than disappearing -- the property that distinguishes this from Phase 4's
+    # reverted reporting prohibition (be990c7). Placement is the end of the string, as
+    # registered, so placement is not a second variable.
+    "\n"
+    "Severity is what makes a defect blocking, so assign it from evidence, not from concern. "
+    "Before assigning CRITICAL or HIGH, name either (a) the exact requirement in the task "
+    "above that the code fails to meet, or (b) a concrete input or condition, permitted by "
+    "the code's own declared interface, that produces the failure. If you can name neither "
+    "— the finding rests on a caller violating a declared parameter type, on a threat the "
+    "task explicitly places outside this code's responsibility, on a possible but "
+    "undemonstrated library or platform behavior, or on hardening the task did not ask for "
+    "— still report the defect, but assign at most MEDIUM. Reporting is unaffected: every "
+    "concern you would otherwise raise must still appear in defects; only its severity is "
+    "constrained. Never raise a severity to signal importance, and never lower a violation "
+    "you can ground."
 )
 
 

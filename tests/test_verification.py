@@ -1307,3 +1307,101 @@ def test_an_off_lens_high_defect_still_blocks_the_run() -> None:
     merged = verdict.merge(critics, [])
     assert merged["verdict"] == "FAIL"
     assert verdict.gate(merged, True, []) == "UNVERIFIED"
+
+
+# --- Grounded-severity ceiling: the registered prompt block ------------------
+#
+# Pins the intervention registered in
+# docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 3. These
+# tests assert what the registration fixed -- exact text, registered placement,
+# additive-only edit, and generality -- and nothing about benchmark outcomes.
+# Whether the block changes any verdict is an empirical question the registered
+# experiment answers with live runs; a unit test must never pre-judge it.
+
+_REGISTERED_SEVERITY_BLOCK = (
+    "Severity is what makes a defect blocking, so assign it from evidence, not from concern. "
+    "Before assigning CRITICAL or HIGH, name either (a) the exact requirement in the task "
+    "above that the code fails to meet, or (b) a concrete input or condition, permitted by "
+    "the code's own declared interface, that produces the failure. If you can name neither "
+    "\u2014 the finding rests on a caller violating a declared parameter type, on a threat the "
+    "task explicitly places outside this code's responsibility, on a possible but "
+    "undemonstrated library or platform behavior, or on hardening the task did not ask for "
+    "\u2014 still report the defect, but assign at most MEDIUM. Reporting is unaffected: every "
+    "concern you would otherwise raise must still appear in defects; only its severity is "
+    "constrained. Never raise a severity to signal importance, and never lower a violation "
+    "you can ground."
+)
+
+# The instruction exactly as it stood at the pre-intervention commit (16309b5).
+_PRE_INTERVENTION_RESPONSE_INSTRUCTION = (
+    "\n\nRespond with ONLY a JSON object, no prose before or after, no markdown fences:\n"
+    '{"defects": [{"id": "C1", "category": "CORRECTNESS|SECURITY|CODE-QUALITY", '
+    '"severity": "CRITICAL|HIGH|MEDIUM|LOW", '
+    '"location": "path:line or description", "fix": "what to change"}], '
+    '"verdict": "OK|FAIL"}\n'
+    "verdict must be 'FAIL' iff at least one defect has severity CRITICAL or HIGH, else 'OK'. "
+    "category must be exactly one of CORRECTNESS, SECURITY, or CODE-QUALITY \u2014 use the "
+    "closest match, never invent a more specific label. "
+    'Return {"defects": [], "verdict": "OK"} if you find nothing to flag.'
+)
+
+
+def test_response_instruction_carries_the_registered_block_verbatim() -> None:
+    assert _REGISTERED_SEVERITY_BLOCK in RESPONSE_INSTRUCTION
+
+
+def test_registered_block_sits_at_the_registered_placement() -> None:
+    """Registration section 3: 'Placement is appended at the end', so that placement is
+    not a second variable. Run 16 established placement alone is consequential."""
+    assert RESPONSE_INSTRUCTION.endswith(_REGISTERED_SEVERITY_BLOCK)
+
+
+def test_the_intervention_is_purely_additive() -> None:
+    """Everything that existed before the intervention survives it byte-for-byte --
+    including the 'FAIL iff CRITICAL or HIGH' verdict rule and the closed category enum."""
+    assert RESPONSE_INSTRUCTION.startswith(_PRE_INTERVENTION_RESPONSE_INSTRUCTION)
+    added = RESPONSE_INSTRUCTION[len(_PRE_INTERVENTION_RESPONSE_INSTRUCTION) :]
+    assert added == "\n" + _REGISTERED_SEVERITY_BLOCK, "only the registered block was added"
+
+
+def test_registered_block_names_no_dataset_case_or_task() -> None:
+    """Generality guard. The block must describe classes of ungrounded claim, never a
+    case. Derived from the dataset rather than a hand-written denylist, so it covers
+    every case at once and stays correct as the dataset changes."""
+    from engine.eval.dataset import CASES, TASKS
+
+    for case in CASES:
+        assert case.eval_case_id not in RESPONSE_INSTRUCTION
+    for task in TASKS:
+        assert task.task_id not in RESPONSE_INSTRUCTION
+
+
+def test_registered_block_reports_rather_than_suppresses() -> None:
+    """The property that separates this from Phase 4's reverted reporting prohibition:
+    an ungrounded finding is capped, not silenced. If a future edit turns the ceiling
+    into a filter, this fails."""
+    assert "still report the defect" in _REGISTERED_SEVERITY_BLOCK
+    assert "must still appear in defects" in _REGISTERED_SEVERITY_BLOCK
+    assert "only its severity is constrained" in _REGISTERED_SEVERITY_BLOCK
+    assert "never lower a violation you can ground" in _REGISTERED_SEVERITY_BLOCK
+
+
+def test_blocking_severities_and_retry_policy_are_untouched_by_the_prompt_edit() -> None:
+    """Registration section 10 freezes these. The intervention is prompt-only: the
+    severities that block, the retry count, and the retry trigger are all unchanged."""
+    from engine.verification.judge import _BUDGET_EXHAUSTED, MAX_JUDGE_RETRIES
+    from engine.verification.rubric import BLOCKING, SEVERITIES
+
+    assert BLOCKING == frozenset({"CRITICAL", "HIGH"})
+    assert SEVERITIES == frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW"})
+    assert MAX_JUDGE_RETRIES == 1
+    assert _BUDGET_EXHAUSTED == "max_tokens"
+
+
+def test_gate_still_fails_closed_after_the_prompt_edit() -> None:
+    """The gate reads merged defects and schema errors. A prompt edit cannot reach it,
+    and this pins that: a schema error still fails closed regardless of the prompt."""
+    clean = verdict.merge([{"defects": [], "verdict": "OK"}], [])
+    assert verdict.gate(clean, True, []) == "OK"
+    assert verdict.gate(clean, True, ["judge:security: broken"]) == "UNVERIFIED"
+    assert verdict.gate(clean, False, []) == "UNVERIFIED"
