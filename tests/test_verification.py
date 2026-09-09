@@ -1405,3 +1405,171 @@ def test_gate_still_fails_closed_after_the_prompt_edit() -> None:
     assert verdict.gate(clean, True, []) == "OK"
     assert verdict.gate(clean, True, ["judge:security: broken"]) == "UNVERIFIED"
     assert verdict.gate(clean, False, []) == "UNVERIFIED"
+
+
+# --- Grounded-severity ceiling: mechanism-level regression pins -------------
+#
+# The intervention is prompt-only (see the block above): nothing in verdict.py,
+# schema.py, rubric.py or automated.py changed, and nothing here can make a
+# live judge follow the instruction -- that is the open empirical question
+# Stage 1 (runs #50-56, docs/benchmark/BASELINE.md) left INCOMPLETE when the
+# Anthropic account ran out of credit mid-run. What these tests CAN pin,
+# deterministically, is the downstream mechanism the instruction relies on:
+# if a lens assigns the severity the ceiling asks for, merge()/gate() produce
+# the intended outcome; if a genuinely grounded CRITICAL/HIGH survives
+# anywhere in the merged defect set, the case still blocks, regardless of how
+# many ungrounded findings were correctly demoted elsewhere. None of these
+# tests assert or imply that a live judge actually performs the demotion.
+
+
+def test_edge_case_02_clean_ungrounded_high_blocks_before_demotion() -> None:
+    """The finding as recorded in every baseline run (#50-53): a HIGH correctness
+    defect resting on a caller passing a non-dict `user`, which the declared
+    signature `get_user_email(user: dict)` excludes. Pins the 'before' state."""
+    critic = {
+        "defects": [
+            {
+                "id": "C1",
+                "category": "CORRECTNESS",
+                "severity": "HIGH",
+                "location": "solution.py:4",
+                "fix": "guard against a non-dict `user`",
+            }
+        ],
+        "verdict": "FAIL",
+    }
+    merged = verdict.merge([critic], [])
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"
+
+
+def test_edge_case_02_clean_demoted_medium_passes() -> None:
+    """Same finding, demoted to MEDIUM under section 3 ('a caller violating a
+    declared parameter type' is named explicitly as a MEDIUM-ceiling ground).
+    Reporting survives -- the defect is still present -- only the severity,
+    and therefore the gate outcome, changes."""
+    critic = {
+        "defects": [
+            {
+                "id": "C1",
+                "category": "CORRECTNESS",
+                "severity": "MEDIUM",
+                "location": "solution.py:4",
+                "fix": "guard against a non-dict `user`",
+            }
+        ],
+        "verdict": "OK",
+    }
+    merged = verdict.merge([critic], [])
+    assert len(merged["defects"]) == 1, "demotion must not drop the finding"
+    assert verdict.gate(merged, True, []) == "OK"
+
+
+def test_security_04_clean_full_demotion_flips_the_verdict() -> None:
+    """Mirrors the defect makeup recorded in baseline runs 50-53: one HIGH
+    correctness finding and three CRITICAL/HIGH security findings (self-refuting,
+    out-of-scope DNS-rebinding, an empirically false IPv4-mapped claim -- see
+    GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 1). If every one demotes
+    to MEDIUM exactly as the ceiling instructs, the case is no longer blocked."""
+    correctness = {
+        "defects": [
+            {"id": "C1", "category": "CORRECTNESS", "severity": "MEDIUM",
+             "location": "solution.py:10", "fix": "n/a"},
+        ],
+        "verdict": "OK",
+    }
+    security = {
+        "defects": [
+            {"id": "S1", "category": "SECURITY", "severity": "MEDIUM",
+             "location": "solution.py:20", "fix": "n/a"},
+            {"id": "S2", "category": "SECURITY", "severity": "MEDIUM",
+             "location": "solution.py:25", "fix": "n/a"},
+            {"id": "S3", "category": "SECURITY", "severity": "MEDIUM",
+             "location": "solution.py:30", "fix": "n/a"},
+        ],
+        "verdict": "OK",
+    }
+    merged = verdict.merge([correctness, security], [])
+    assert len(merged["defects"]) == 4, "demotion must not drop any finding"
+    assert verdict.gate(merged, True, []) == "OK"
+
+
+def test_security_04_clean_partial_demotion_still_blocks() -> None:
+    """Matches intervention runs #54 and #55 (.engine/state.db): blocking mass
+    fell from the baseline's 4 to 1 and to 2 respectively, but the case did not
+    flip to OK in either run. Registration section 5: 'a verdict flip needs ALL
+    [blockers] to drop' -- redundant blocking mass means partial compliance
+    cannot clear a case, by construction of merge()/gate(), not by chance."""
+    correctness = {
+        "defects": [
+            {"id": "C1", "category": "CORRECTNESS", "severity": "MEDIUM",
+             "location": "solution.py:10", "fix": "n/a"},
+        ],
+        "verdict": "OK",
+    }
+    security = {
+        "defects": [
+            {"id": "S1", "category": "SECURITY", "severity": "MEDIUM",
+             "location": "solution.py:20", "fix": "n/a"},
+            {"id": "S2", "category": "SECURITY", "severity": "MEDIUM",
+             "location": "solution.py:25", "fix": "n/a"},
+            {"id": "S3", "category": "SECURITY", "severity": "HIGH",
+             "location": "solution.py:30", "fix": "n/a"},  # one survives ungrounded-fixed
+        ],
+        "verdict": "FAIL",
+    }
+    merged = verdict.merge([correctness, security], [])
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"
+
+
+def test_security_03_clean_genuine_grounded_finding_still_blocks() -> None:
+    """A finding that names the exact violated requirement -- the ceiling's own
+    carve-out (a) -- is unaffected by its own existence: nothing in merge()/gate()
+    can silently downgrade a CRITICAL/HIGH severity a lens actually assigned."""
+    critic = {
+        "defects": [
+            {
+                "id": "S1",
+                "category": "SECURITY",
+                "severity": "CRITICAL",
+                "location": "solution.py:12",
+                "fix": "only connect to an address that was itself checked",
+            },
+        ],
+        "verdict": "FAIL",
+    }
+    merged = verdict.merge([critic], [])
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"
+
+
+def test_security_03_clean_automated_gate_failure_is_untouched_by_the_ceiling() -> None:
+    """Run #55's actual security-03-clean regression (.engine/state.db) came from
+    an 'automated' lens (mypy), not a judge finding. automated_defects() hardcodes
+    severity='HIGH' independent of LENSES/RESPONSE_INSTRUCTION entirely, so the
+    grounded-severity prompt cannot reach this path -- pinned here so a future
+    reader does not mistake an automated-gate regression for a judge one."""
+    results = [VerificationResult("mypy", False, "error: Incompatible types")]
+    defects = automated_defects(results)
+    assert defects[0]["severity"] == "HIGH"
+    merged = verdict.merge([], defects)
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"
+    # automated_passed=False alone is independently sufficient to block, with
+    # no defects at all -- confirming the two paths are wholly separate.
+    assert verdict.gate(verdict.merge([], []), False, []) == "UNVERIFIED"
+
+
+def test_ceiling_cannot_be_used_to_self_report_ok_around_a_real_high() -> None:
+    """The one path the ceiling could theoretically be abused through: a model
+    that keeps a defect at HIGH (correctly, because it can ground it) but
+    reports verdict OK anyway. enforce_critic_schema computes the expected
+    verdict from severities, never from the model's own claim, so this is
+    rejected as a schema error and fails closed -- it can never become a
+    silent false pass, regardless of what the ceiling instruction says."""
+    critic = {
+        "defects": [
+            {"id": "C1", "category": "SECURITY", "severity": "HIGH",
+             "location": "solution.py:1", "fix": "fix it"},
+        ],
+        "verdict": "OK",  # self-contradictory
+    }
+    errors = enforce_critic_schema(critic)
+    assert errors == ["verdict: is 'OK' but expected 'FAIL' given the defects"]

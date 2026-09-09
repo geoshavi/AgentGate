@@ -55,6 +55,74 @@ Chronological snapshot of `engine-review-benchmark` runs, read directly from `.e
 
 **Dataset v5 begins at commit `eea901e` (`eea901ea43d1b213eccff193daceaf75387c1c8b`, "Dataset v5 -- implement and close amendments A-4 and A-5").** It is registered in `docs/benchmark/DATASET_V5_AMENDMENT.md`. **No live baseline measurement exists for v5 as of this entry** — the table above ends at run 46, which ran on v4. Any future v5 `engine bench` run must be appended as a new row with `dataset_version = v5` and recorded as a separate measurement series per the boundary note below; it must never be pooled with, averaged against, or read as a delta from run 46 or any other v4/v3/v2/v1 row.
 
+## Grounded-severity ceiling — Stage 1 (dataset v6, INCOMPLETE)
+
+Registered in `docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md`. Baseline SHA
+`16309b52d51d1774c9f5b1b7c3a6af6eef03199a`; intervention SHA
+`fd8f136dd5714dbac66d8700f82d3f7d41b97ae8` (the §3 block appended to
+`RESPONSE_INSTRUCTION`, prompt-only, verified byte-identical to the registration).
+
+| run | date | commit sha | dataset_version | accuracy | false_pass | false_unverified | cost | what changed |
+|-----|------------|------------|------------------|----------------|-------------|-------------------|---------|------------------------------------------|
+| 50  | 2026-09-08 | 16309b5    | v6               | 38/40 (95.0%)  | 0           | 2                 | $0.5073 | Stage 1 baseline arm, run 1/4 |
+| 51  | 2026-09-08 | 16309b5    | v6               | 39/40 (97.5%)  | 0           | 1                 | $0.5222 | Stage 1 baseline arm, run 2/4 |
+| 52  | 2026-09-08 | 16309b5    | v6               | 38/40 (95.0%)  | **1**       | 1                 | $0.5362 | Stage 1 baseline arm, run 3/4 |
+| 53  | 2026-09-08 | 16309b5    | v6               | 38/40 (95.0%)  | 0           | 2                 | $0.5598 | Stage 1 baseline arm, run 4/4 |
+| 54  | 2026-09-08 | fd8f136    | v6               | 39/40 (97.5%)  | 0           | 1                 | $0.7307 | Stage 1 intervention arm, run 1/4 |
+| 55  | 2026-09-08 | fd8f136    | v6               | 37/40 (92.5%)  | 0           | 3                 | $0.7196 | Stage 1 intervention arm, run 2/4 |
+| 56  | 2026-09-08 | fd8f136    | v6               | **VOID**       | —           | —                 | $0.5690 | **Stage 1 intervention arm, run 3/4 — ABORTED.** 11/40 cases errored with `BadRequestError: Your credit balance is too low to access the Anthropic API`, including `edge_case-02-clean`, a primary target. Excluded per registration §8.4 (any run with ≥1 `eval_case_results.error` row is void). |
+
+- **Stage 1 is INCOMPLETE, not INCONCLUSIVE-per-registration.** It stopped because the
+  Anthropic account ran out of API credit mid-run-3, not by any pre-registered decision
+  rule. Only 2 of the required 4 intervention runs (54, 55) are valid; run 56 is void and
+  excluded. The registration's Stage 1 rules (§7.1) require N=4 per arm and were **never
+  evaluated** — do not read this entry as a completed Stage 1 result in either direction.
+- **Live per-case data recorded, not decided.** `edge_case-02-clean`: OK in 54, UNVERIFIED
+  in 55 (1/2). `security-04-clean` blocking (CRITICAL+HIGH) defect count: 4/4/4/4 across the
+  baseline arm, 1 in run 54, 2 in run 55 — down from baseline but never zero, consistent
+  with the registration's own note that this case's redundant blocking mass needs every
+  finding demoted to flip. `security-03-clean`: OK in 54, UNVERIFIED in 55, OK in the
+  excluded run 56. Intervention-arm false passes: **0/2**.
+- **Baseline anomaly — the registration's own assumed baseline did not hold when
+  measured fresh.** The registration's §5 targets cite historical runs 44/46/47/48 as
+  `edge_case-02-clean` = **0/4**. This session's freshly-run, concurrently-measured
+  baseline arm (50-53, run at the unmodified pre-intervention SHA) measured **3/4** —
+  only run 50 failed. This is a single N=4 cluster and does not by itself establish a new
+  baseline figure, but it means the 0/4-vs-X/4 framing this experiment was designed around
+  does not hold as measured, and should be weighed before any further Stage 1 spend.
+- **`security-03-clean`'s one intervention-arm failure (run 55) is not attributable to the
+  judge severity ceiling.** Its defect record for that run is a single `automated`/mypy
+  finding, not a judge-lens finding — `automated_defects()` (`src/engine/verification/automated.py`)
+  hardcodes `severity = "HIGH"` for every failed automated gate, entirely independent of
+  `LENSES`/`RESPONSE_INSTRUCTION`. The grounded-severity prompt text cannot reach this path.
+  Pinned as a deterministic regression test (`test_security_03_clean_automated_gate_failure_is_untouched_by_the_ceiling`,
+  `tests/test_verification.py`) so a future reader does not mistake code-generation variance
+  in the coding agent's output for a judge-severity regression.
+- **Offline validation performed in lieu of completing Stage 1.** Seven deterministic
+  regression tests were added to `tests/test_verification.py`, exercising `verdict.merge`/
+  `verdict.gate`/`schema.enforce_critic_schema` directly against critic shapes mirroring the
+  real defect patterns above — no network or provider call. They pin: the pre-intervention
+  HIGH blocks / post-demotion MEDIUM passes shape for `edge_case-02-clean`; full-demotion
+  flips `security-04-clean` while partial demotion (one blocker surviving) still blocks it,
+  matching runs 54/55 exactly; a genuinely grounded CRITICAL/HIGH always still blocks
+  regardless of the ceiling; the automated-gate/judge-lens separation above; and that a
+  model cannot self-report `verdict: OK` around a HIGH/CRITICAL defect it still lists —
+  `enforce_critic_schema` computes the expected verdict from severities, not the model's
+  claim, so this fails closed rather than becoming a silent false pass. Full offline suite:
+  1687 passed, 3 skipped, ruff clean, mypy clean (commit noted below).
+- **What this offline work does and does not establish.** It confirms the pre-existing
+  merge/gate/schema mechanism behaves correctly under every severity pattern the ceiling
+  could produce, and that no production defect exists in the code the ceiling text sits
+  inside. It **cannot** verify that a live judge actually performs the demotion the
+  instruction asks for — that is exactly the empirical question Stage 1 was designed to
+  answer and did not reach N=4 on. **Acceptance of the intervention rests on this
+  deterministic regression coverage plus the partial live evidence above (runs 50-55) —
+  it is not a completed N=4 experimental validation**, and must not be cited as one.
+- **Next step, when credit is restored:** 2 more valid intervention runs at `fd8f136`
+  (a replacement for void run 56, plus the still-outstanding run 4) to complete N=4 per
+  arm, at which point the registration's §7.1 hard-stop/futility rules can actually be
+  applied — informed by the baseline-anomaly note above.
+
 ## Notes
 
 - Runs 6-9 were executed on an identical commit (942f509) and show a spread of 29-32/40 correct verdicts (72.5%-80.0%), i.e. a ±3/40 noise floor. Single-run deltas smaller than this are not interpretable as real changes.
