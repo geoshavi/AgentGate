@@ -122,6 +122,44 @@ Registered in `docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md`. Bas
   (a replacement for void run 56, plus the still-outstanding run 4) to complete N=4 per
   arm, at which point the registration's §7.1 hard-stop/futility rules can actually be
   applied — informed by the baseline-anomaly note above.
+- **FORMAL CLOSURE (2026-09-08) — grounded-severity ceiling is CLOSED as
+  INCOMPLETE / INCONCLUSIVE.** Registered in
+  `docs/benchmark/STRUCTURED_GROUNDING_REGISTRATION.md` §0. It stopped on insufficient
+  API credit, **not** on any pre-registered decision rule; its Stage 1 rules required N=4
+  per arm and were never evaluated, so **no ACCEPT, REJECT or registered-INCONCLUSIVE
+  verdict was reached and none may be cited.** Runs **#50-53** (baseline, N=4) and
+  **#54-55** (intervention, N=2) are preserved as partial evidence of their own SHAs;
+  run **#56 remains VOID** and is never scored or averaged. Its §3 prose block is
+  superseded at HEAD by the structured-grounding contract, which **starts a new
+  configuration cluster in which no run in this table is a valid baseline.**
+- **Forensic finding on the two surviving intervention-arm blockers** (offline, read from
+  a scratchpad copy of `.engine/state.db`; no run performed). Neither is a genuine
+  vulnerability. One family rests on re-resolution, which the task text explicitly
+  excludes, and its own defect prose concedes *"this is fine as written ... No fix needed"*
+  while still carrying HIGH. The other rests on a library claim that is **empirically
+  false on the interpreter in use** (Python 3.14.5): the IPv4-mapped IPv6 form the finding
+  names as unblocked is in fact classified private and loopback, so the guard rejects it;
+  the same check refutes the 6to4, Teredo, `0.0.0.0/8` and benchmarking-range variants.
+  Two claims **verified true and genuinely unblocked** — CGNAT `100.64.0.0/10` and
+  deprecated IPv6 site-local `fec0::/10` — **never carried blocking severity in any run**
+  and remain visible at MEDIUM in both intervention runs, satisfying the preceding
+  registration's §9.1 preservation constraint.
+- **Measured mechanism — severity miscalibration is a propagation failure, not a
+  reasoning failure.** In one intervention run the judge reached the correct
+  not-a-defect conclusion for two findings of the same family and propagated it into
+  `severity` for one (MEDIUM) but not the other (HIGH); the same run assigned one
+  identical claim MEDIUM under one lens and HIGH under another. The prose ceiling gave
+  the grounding test no output slot, so compliance was unobservable and unenforceable.
+  This is the failure the structured-grounding contract is built to make machine-checkable.
+- **Unregistered exposure finding — false-pass margin is wider than the preceding
+  registration estimated.** That registration's §9 G1 analysis (from run 48, n=1) named
+  one broken case as resting on a single HIGH. Measured across runs #50-55: **12 of 20
+  broken cases rest on exactly one blocking defect in at least one run, and ~7 of those
+  carry zero CRITICALs in at least one run.** `quality-04-broken` reached **zero**
+  blockers in run 52 — the baseline arm's recorded `false_pass = 1`, which occurred at the
+  **baseline** SHA and is therefore not attributable to the intervention. Any future
+  mechanism that demotes blocking defects automatically has a correspondingly wider blast
+  radius; that is why automatic demotion is forbidden by the new registration's S2.
 
 ## Notes
 
