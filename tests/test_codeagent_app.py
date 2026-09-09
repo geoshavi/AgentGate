@@ -250,6 +250,10 @@ def test_passed_comes_only_from_agentgate(tmp_path: Path) -> None:
                 "id": "C1",
                 "category": "CORRECTNESS",
                 "severity": "HIGH",
+                "grounding_status": "in_contract_reachable",
+                "violated_requirement": "the task requires this behaviour",
+                "code_path": "solution.py:1",
+                "trigger": "the documented input",
                 "location": "todo.py:3",
                 "fix": "the guard rejects valid dates",
             }
@@ -351,6 +355,10 @@ def test_repair_feedback_reaches_the_agent(tmp_path: Path) -> None:
                 "id": "C1",
                 "category": "CORRECTNESS",
                 "severity": "HIGH",
+                "grounding_status": "in_contract_reachable",
+                "violated_requirement": "the task requires this behaviour",
+                "code_path": "solution.py:1",
+                "trigger": "the documented input",
                 "location": "todo.py:3",
                 "fix": "use raw.strip() instead of a length check",
             }
@@ -588,6 +596,10 @@ def test_cli_exits_one_when_verification_blocks(monkeypatch, capsys, tmp_path: P
                 "id": "C1",
                 "category": "SECURITY",
                 "severity": "CRITICAL",
+                "grounding_status": "in_contract_reachable",
+                "violated_requirement": "the task requires this behaviour",
+                "code_path": "solution.py:1",
+                "trigger": "the documented input",
                 "location": "todo.py:1",
                 "fix": "do not do that",
             }

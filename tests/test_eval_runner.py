@@ -301,6 +301,7 @@ def test_run_case_records_a_lens_result_row_for_a_lens_that_found_nothing(
                     "id": "S1",
                     "category": "SECURITY",
                     "severity": "LOW",
+                    "grounding_status": "in_contract_reachable",
                     "location": "x",
                     "fix": "y",
                     "lens": "security",
@@ -319,7 +320,8 @@ def test_run_case_records_a_lens_result_row_for_a_lens_that_found_nothing(
         )
 
     assert result.defects == [
-        {"id": "S1", "category": "SECURITY", "severity": "LOW", "location": "x", "fix": "y", "lens": "security"}
+        {"id": "S1", "category": "SECURITY", "severity": "LOW", "location": "x", "fix": "y",
+         "grounding_status": "in_contract_reachable", "lens": "security"}
     ]
     by_lens = {lr.lens: lr for lr in result.lens_results}
     assert set(by_lens) == {"correctness", "security", "code-quality"}
@@ -478,6 +480,10 @@ def test_eval_case_defects_and_lens_results_persist_with_correct_fk(monkeypatch,
                     "id": "C1",
                     "category": "CORRECTNESS",
                     "severity": "HIGH",
+                    "grounding_status": "in_contract_reachable",
+                    "violated_requirement": "the task requires this behaviour",
+                    "code_path": "solution.py:1",
+                    "trigger": "the documented input",
                     "location": "a:1",
                     "fix": "z",
                     "lens": "correctness",
@@ -571,7 +577,7 @@ def test_record_eval_case_defects_falls_back_to_automated_for_script_defects(tmp
         db.record_eval_case_defects(
             conn,
             eval_case_result_id,
-            [{"id": "AUTO0-mypy", "category": "CORRECTNESS", "severity": "HIGH", "location": "mypy", "fix": "f"}],
+            [{"id": "AUTO0-mypy", "category": "CORRECTNESS", "severity": "HIGH", "location": "mypy", "fix": "f", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"}],
         )
         conn.commit()
 
@@ -800,6 +806,10 @@ def test_defect_text_with_an_unpaired_surrogate_is_persisted_not_crashed(tmp_pat
                     "id": "C1",
                     "category": "CORRECTNESS",
                     "severity": "HIGH",
+                    "grounding_status": "in_contract_reachable",
+                    "violated_requirement": "the task requires this behaviour",
+                    "code_path": "solution.py:1",
+                    "trigger": "the documented input",
                     "location": lone_surrogate,
                     "fix": lone_surrogate,
                 }
@@ -865,6 +875,10 @@ def test_well_formed_text_including_real_emoji_round_trips_unchanged(tmp_path: P
                     "id": "C1",
                     "category": "CORRECTNESS",
                     "severity": "HIGH",
+                    "grounding_status": "in_contract_reachable",
+                    "violated_requirement": "the task requires this behaviour",
+                    "code_path": "solution.py:1",
+                    "trigger": "the documented input",
                     "location": "solution.py:2",
                     "fix": intact,
                 }

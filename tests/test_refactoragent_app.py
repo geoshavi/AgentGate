@@ -156,7 +156,7 @@ def test_an_injected_prompt_reaches_every_repair_round(tmp_path: Path) -> None:
     """The repair-round CodingSession construction gets the same override too,
     not just the initial one -- both were changed, and this proves both."""
     custom = "You are a refactoring agent. CUSTOM MARKER."
-    defect = [{"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "x.py:1", "fix": "f"}]
+    defect = [{"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "x.py:1", "fix": "f", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"}]
     fake = ScenarioProvider(
         agent_turns=[
             tool_turn("write_file", {"path": "x.py", "content": "x = 1\n"}),
@@ -316,7 +316,7 @@ def test_a_behaviour_preserving_refactor_passes_through_real_agentgate(tmp_path:
 
 def test_a_judge_blocked_change_ends_unverified_not_passed(tmp_path: Path) -> None:
     defect = [
-        {"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "todo.py:1", "fix": "f"}
+        {"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "todo.py:1", "fix": "f", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"}
     ]
     result, _ = go(tmp_path, REFACTOR_TURNS, judge_rounds=[critic(defect)])
 

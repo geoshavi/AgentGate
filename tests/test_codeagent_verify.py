@@ -48,7 +48,16 @@ def defect(severity: str = "HIGH", **overrides: object) -> dict:
         "severity": severity,
         "location": "todo.py:1",
         "fix": "guard the empty string",
+        "grounding_status": "in_contract_reachable",
     }
+    if severity in ("CRITICAL", "HIGH"):
+        base.update(
+            {
+                "violated_requirement": "the task requires this behaviour",
+                "code_path": "todo.py:1",
+                "trigger": "the documented input",
+            }
+        )
     base.update(overrides)
     return base
 
@@ -430,7 +439,7 @@ def test_sanitize_keeps_the_schema_keys_and_the_emitting_lens() -> None:
 
     cleaned = sanitize_defects(raw)
 
-    assert set(cleaned[0]) == {"id", "category", "severity", "location", "fix", "lens"}
+    assert set(cleaned[0]) == {"id", "category", "severity", "location", "fix", "grounding_status", "lens"}
     assert "reasoning" not in cleaned[0]
 
 
@@ -877,7 +886,7 @@ def test_real_pipeline_blocking_defect_reaches_unverified(tmp_path: Path) -> Non
     assert result.verification.defects
     # Sanitised, and now carrying the lens that emitted each one.
     assert all(
-        set(d) == {"id", "category", "severity", "location", "fix", "lens"}
+        set(d) == {"id", "category", "severity", "location", "fix", "grounding_status", "lens"}
         for d in result.verification.defects
     )
 

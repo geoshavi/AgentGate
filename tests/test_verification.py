@@ -56,7 +56,7 @@ def test_enforce_critic_schema_accepts_well_formed_critic() -> None:
 def test_enforce_critic_schema_rejects_inconsistent_verdict() -> None:
     critic = {
         "defects": [
-            {"id": "C1", "category": "CORRECTNESS", "severity": "CRITICAL", "location": "x", "fix": "y"}
+            {"id": "C1", "category": "CORRECTNESS", "severity": "CRITICAL", "location": "x", "fix": "y", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"}
         ],
         "verdict": "OK",
     }
@@ -139,7 +139,7 @@ def test_parse_critic_takes_the_last_of_two_complete_json_objects() -> None:
     draft = json.dumps(
         {
             "defects": [
-                {"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "x", "fix": "y"}
+                {"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "x", "fix": "y", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"}
             ],
             "verdict": "FAIL",
         }
@@ -166,6 +166,7 @@ def test_parse_critic_ignores_braces_inside_quoted_strings() -> None:
                     "id": "C1",
                     "category": "CODE-QUALITY",
                     "severity": "MEDIUM",
+                    "grounding_status": "in_contract_reachable",
                     "location": "solution.py:4",
                     "fix": 'extract {"name": "New User"} to a named constant',
                 }
@@ -200,7 +201,7 @@ def test_parse_critic_still_rejects_out_of_enum_category_unchanged_by_this_fix()
     response_text = json.dumps(
         {
             "defects": [
-                {"id": "C1", "category": "LOGIC", "severity": "LOW", "location": "x", "fix": "y"}
+                {"id": "C1", "category": "LOGIC", "severity": "LOW", "location": "x", "fix": "y", "grounding_status": "in_contract_reachable"}
             ],
             "verdict": "OK",
         }
@@ -240,7 +241,7 @@ def test_run_judge_gates_tags_each_defect_with_the_lens_that_produced_it() -> No
     response_text = json.dumps(
         {
             "defects": [
-                {"id": "X1", "category": "SECURITY", "severity": "LOW", "location": "x", "fix": "y"}
+                {"id": "X1", "category": "SECURITY", "severity": "LOW", "location": "x", "fix": "y", "grounding_status": "in_contract_reachable"}
             ],
             "verdict": "OK",
         }
@@ -402,7 +403,7 @@ def test_verdict_merge_fails_when_any_blocking_defect_present() -> None:
         {"defects": [], "verdict": "OK"},
         {
             "defects": [
-                {"id": "S1", "category": "SECURITY", "severity": "CRITICAL", "location": "x", "fix": "y"}
+                {"id": "S1", "category": "SECURITY", "severity": "CRITICAL", "location": "x", "fix": "y", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"}
             ],
             "verdict": "FAIL",
         },
@@ -446,6 +447,10 @@ def test_pipeline_run_verification_fails_when_judges_report_blocking_defects(
                             "id": "C1",
                             "category": "CORRECTNESS",
                             "severity": "HIGH",
+                            "grounding_status": "in_contract_reachable",
+                            "violated_requirement": "the task requires this behaviour",
+                            "code_path": "solution.py:1",
+                            "trigger": "the documented input",
                             "location": "solution.py:1",
                             "fix": "fix the bug",
                         }
@@ -481,6 +486,10 @@ def test_build_retry_feedback_includes_defect_fix_text() -> None:
                 "id": "C1",
                 "category": "CORRECTNESS",
                 "severity": "HIGH",
+                "grounding_status": "in_contract_reachable",
+                "violated_requirement": "the task requires this behaviour",
+                "code_path": "solution.py:1",
+                "trigger": "the documented input",
                 "location": "solution.py:3",
                 "fix": "handle the empty-string case",
             }
@@ -646,6 +655,10 @@ def test_verdict_is_identical_for_every_stop_reason_when_the_text_is_blocking(
                     "id": "C1",
                     "category": "CORRECTNESS",
                     "severity": "HIGH",
+                    "grounding_status": "in_contract_reachable",
+                    "violated_requirement": "the task requires this behaviour",
+                    "code_path": "solution.py:1",
+                    "trigger": "the documented input",
                     "location": "solution.py:1",
                     "fix": "fix the bug",
                 }
@@ -716,6 +729,10 @@ def _blocking_critic_json() -> str:
                     "id": "C1",
                     "category": "CORRECTNESS",
                     "severity": "HIGH",
+                    "grounding_status": "in_contract_reachable",
+                    "violated_requirement": "the task requires this behaviour",
+                    "code_path": "solution.py:1",
+                    "trigger": "the documented input",
                     "location": "solution.py:1",
                     "fix": "fix the bug",
                 }
@@ -1277,6 +1294,10 @@ def test_an_off_lens_high_defect_still_blocks_the_run() -> None:
                     "id": "C1",
                     "category": "CORRECTNESS",
                     "severity": "HIGH",
+                    "grounding_status": "in_contract_reachable",
+                    "violated_requirement": "the task requires this behaviour",
+                    "code_path": "solution.py:1",
+                    "trigger": "the documented input",
                     "location": "cart.py:_discount",
                     "fix": "guard the empty case",
                 }
@@ -1309,40 +1330,47 @@ def test_an_off_lens_high_defect_still_blocks_the_run() -> None:
     assert verdict.gate(merged, True, []) == "UNVERIFIED"
 
 
-# --- Grounded-severity ceiling: the registered prompt block ------------------
+# --- Structured grounding contract: the registered prompt block --------------
 #
 # Pins the intervention registered in
-# docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 3. These
-# tests assert what the registration fixed -- exact text, registered placement,
-# additive-only edit, and generality -- and nothing about benchmark outcomes.
-# Whether the block changes any verdict is an empirical question the registered
-# experiment answers with live runs; a unit test must never pre-judge it.
+# docs/benchmark/STRUCTURED_GROUNDING_REGISTRATION.md section 2, which SUPERSEDES
+# the prose ceiling of GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 3
+# (applied at fd8f136, closed INCOMPLETE/INCONCLUSIVE). These tests assert what
+# the registration fixed -- placement, generality, and the report-don't-suppress
+# property -- and nothing about benchmark outcomes. Whether the block changes any
+# verdict is an empirical question only a live run answers; a unit test must
+# never pre-judge it.
 
 _REGISTERED_SEVERITY_BLOCK = (
     "Severity is what makes a defect blocking, so assign it from evidence, not from concern. "
-    "Before assigning CRITICAL or HIGH, name either (a) the exact requirement in the task "
-    "above that the code fails to meet, or (b) a concrete input or condition, permitted by "
-    "the code's own declared interface, that produces the failure. If you can name neither "
-    "\u2014 the finding rests on a caller violating a declared parameter type, on a threat the "
-    "task explicitly places outside this code's responsibility, on a possible but "
-    "undemonstrated library or platform behavior, or on hardening the task did not ask for "
-    "\u2014 still report the defect, but assign at most MEDIUM. Reporting is unaffected: every "
-    "concern you would otherwise raise must still appear in defects; only its severity is "
-    "constrained. Never raise a severity to signal importance, and never lower a violation "
-    "you can ground."
+    "Every defect must carry grounding_status, classifying what its claim actually rests on: "
+    "'in_contract_reachable' \u2014 reachable under the interface and the guarantees the task "
+    "states; 'out_of_contract' \u2014 rests on usage the declared interface or the task's stated "
+    "scope excludes; 'contradicts_explicit_guarantee' \u2014 rests on a premise the task text "
+    "explicitly rules out; 'factually_unverified' \u2014 rests on library or platform behavior "
+    "you have not demonstrated from the code supplied above. "
+    "Only 'in_contract_reachable' may carry CRITICAL or HIGH, and such a defect must also "
+    "give violated_requirement (the exact requirement in the task it fails to meet), "
+    "code_path (the concrete path in the supplied code), and trigger (the concrete input or "
+    "execution condition that produces the failure) \u2014 each non-empty. If you cannot fill all "
+    "three from the task text and the supplied code, the correct status is one of the other "
+    "three and the severity is at most MEDIUM. "
+    "These fields must agree with each other and with your own text: if your explanation or "
+    "fix says the code is correct as written, that the concern is mitigated, that no change "
+    "is needed, or that the risk depends on a caller or platform behaving in a way the task "
+    "does not state, then the status is not 'in_contract_reachable' and the severity is not "
+    "blocking. Reporting is unaffected: every concern you would otherwise raise must still "
+    "appear in defects, with its status recorded; only what may block is constrained. Never "
+    "raise a severity to signal importance, and never lower a violation you can ground."
 )
 
-# The instruction exactly as it stood at the pre-intervention commit (16309b5).
-_PRE_INTERVENTION_RESPONSE_INSTRUCTION = (
-    "\n\nRespond with ONLY a JSON object, no prose before or after, no markdown fences:\n"
-    '{"defects": [{"id": "C1", "category": "CORRECTNESS|SECURITY|CODE-QUALITY", '
-    '"severity": "CRITICAL|HIGH|MEDIUM|LOW", '
-    '"location": "path:line or description", "fix": "what to change"}], '
-    '"verdict": "OK|FAIL"}\n'
-    "verdict must be 'FAIL' iff at least one defect has severity CRITICAL or HIGH, else 'OK'. "
-    "category must be exactly one of CORRECTNESS, SECURITY, or CODE-QUALITY \u2014 use the "
-    "closest match, never invent a more specific label. "
-    'Return {"defects": [], "verdict": "OK"} if you find nothing to flag.'
+# The prose ceiling this block replaced. Kept so the supersession is a recorded
+# fact rather than a silent deletion: the previous registration's text is
+# permanently retrievable from the test suite even though it no longer runs.
+_SUPERSEDED_PROSE_CEILING = (
+    "Before assigning CRITICAL or HIGH, name either (a) the exact requirement in the task "
+    "above that the code fails to meet, or (b) a concrete input or condition, permitted by "
+    "the code's own declared interface, that produces the failure."
 )
 
 
@@ -1351,17 +1379,41 @@ def test_response_instruction_carries_the_registered_block_verbatim() -> None:
 
 
 def test_registered_block_sits_at_the_registered_placement() -> None:
-    """Registration section 3: 'Placement is appended at the end', so that placement is
-    not a second variable. Run 16 established placement alone is consequential."""
+    """Registration section 2.2 keeps the block at the end, as its predecessor did,
+    so that placement is not a second variable. Run 16 established placement alone
+    is consequential."""
     assert RESPONSE_INSTRUCTION.endswith(_REGISTERED_SEVERITY_BLOCK)
 
 
-def test_the_intervention_is_purely_additive() -> None:
-    """Everything that existed before the intervention survives it byte-for-byte --
-    including the 'FAIL iff CRITICAL or HIGH' verdict rule and the closed category enum."""
-    assert RESPONSE_INSTRUCTION.startswith(_PRE_INTERVENTION_RESPONSE_INSTRUCTION)
-    added = RESPONSE_INSTRUCTION[len(_PRE_INTERVENTION_RESPONSE_INSTRUCTION) :]
-    assert added == "\n" + _REGISTERED_SEVERITY_BLOCK, "only the registered block was added"
+def test_the_superseded_prose_ceiling_is_gone() -> None:
+    """The replacement is a replacement, not an accumulation. Two overlapping
+    severity rules in one prompt would make any future result unattributable."""
+    assert _SUPERSEDED_PROSE_CEILING not in RESPONSE_INSTRUCTION
+
+
+def test_the_frozen_contract_survives_the_prompt_edit() -> None:
+    """Unlike its predecessor this edit is not purely additive -- the JSON template
+    gained the grounding fields -- so what is pinned instead is the part registration
+    section 7 freezes: the verdict rule and the closed category enum, verbatim."""
+    assert (
+        "verdict must be 'FAIL' iff at least one defect has severity CRITICAL or HIGH, "
+        "else 'OK'." in RESPONSE_INSTRUCTION
+    )
+    assert (
+        "category must be exactly one of CORRECTNESS, SECURITY, or CODE-QUALITY"
+        in RESPONSE_INSTRUCTION
+    )
+    assert '{"defects": [], "verdict": "OK"} if you find nothing to flag.' in RESPONSE_INSTRUCTION
+
+
+def test_the_prompt_names_every_grounding_status_it_will_be_validated_against() -> None:
+    """The prompt and the validator must not drift apart: a status the schema accepts
+    but the prompt never names is unreachable, and one the prompt names but the schema
+    rejects fails every response that uses it."""
+    from engine.verification.rubric import GROUNDING_STATUSES
+
+    for status in GROUNDING_STATUSES:
+        assert status in RESPONSE_INSTRUCTION, status
 
 
 def test_registered_block_names_no_dataset_case_or_task() -> None:
@@ -1377,13 +1429,14 @@ def test_registered_block_names_no_dataset_case_or_task() -> None:
 
 
 def test_registered_block_reports_rather_than_suppresses() -> None:
-    """The property that separates this from Phase 4's reverted reporting prohibition:
-    an ungrounded finding is capped, not silenced. If a future edit turns the ceiling
-    into a filter, this fails."""
-    assert "still report the defect" in _REGISTERED_SEVERITY_BLOCK
+    """The property that separates this from Phase 4's reverted reporting prohibition,
+    carried forward verbatim in intent through the supersession: an ungrounded finding
+    is capped, not silenced. If a future edit turns the contract into a filter, this
+    fails."""
     assert "must still appear in defects" in _REGISTERED_SEVERITY_BLOCK
-    assert "only its severity is constrained" in _REGISTERED_SEVERITY_BLOCK
+    assert "only what may block is constrained" in _REGISTERED_SEVERITY_BLOCK
     assert "never lower a violation you can ground" in _REGISTERED_SEVERITY_BLOCK
+    assert "with its status recorded" in _REGISTERED_SEVERITY_BLOCK
 
 
 def test_blocking_severities_and_retry_policy_are_untouched_by_the_prompt_edit() -> None:
@@ -1432,6 +1485,10 @@ def test_edge_case_02_clean_ungrounded_high_blocks_before_demotion() -> None:
                 "id": "C1",
                 "category": "CORRECTNESS",
                 "severity": "HIGH",
+                "grounding_status": "in_contract_reachable",
+                "violated_requirement": "the task requires this behaviour",
+                "code_path": "solution.py:1",
+                "trigger": "the documented input",
                 "location": "solution.py:4",
                 "fix": "guard against a non-dict `user`",
             }
@@ -1453,6 +1510,7 @@ def test_edge_case_02_clean_demoted_medium_passes() -> None:
                 "id": "C1",
                 "category": "CORRECTNESS",
                 "severity": "MEDIUM",
+                "grounding_status": "in_contract_reachable",
                 "location": "solution.py:4",
                 "fix": "guard against a non-dict `user`",
             }
@@ -1473,18 +1531,18 @@ def test_security_04_clean_full_demotion_flips_the_verdict() -> None:
     correctness = {
         "defects": [
             {"id": "C1", "category": "CORRECTNESS", "severity": "MEDIUM",
-             "location": "solution.py:10", "fix": "n/a"},
+             "location": "solution.py:10", "fix": "n/a", "grounding_status": "in_contract_reachable"},
         ],
         "verdict": "OK",
     }
     security = {
         "defects": [
             {"id": "S1", "category": "SECURITY", "severity": "MEDIUM",
-             "location": "solution.py:20", "fix": "n/a"},
+             "location": "solution.py:20", "fix": "n/a", "grounding_status": "in_contract_reachable"},
             {"id": "S2", "category": "SECURITY", "severity": "MEDIUM",
-             "location": "solution.py:25", "fix": "n/a"},
+             "location": "solution.py:25", "fix": "n/a", "grounding_status": "in_contract_reachable"},
             {"id": "S3", "category": "SECURITY", "severity": "MEDIUM",
-             "location": "solution.py:30", "fix": "n/a"},
+             "location": "solution.py:30", "fix": "n/a", "grounding_status": "in_contract_reachable"},
         ],
         "verdict": "OK",
     }
@@ -1502,18 +1560,18 @@ def test_security_04_clean_partial_demotion_still_blocks() -> None:
     correctness = {
         "defects": [
             {"id": "C1", "category": "CORRECTNESS", "severity": "MEDIUM",
-             "location": "solution.py:10", "fix": "n/a"},
+             "location": "solution.py:10", "fix": "n/a", "grounding_status": "in_contract_reachable"},
         ],
         "verdict": "OK",
     }
     security = {
         "defects": [
             {"id": "S1", "category": "SECURITY", "severity": "MEDIUM",
-             "location": "solution.py:20", "fix": "n/a"},
+             "location": "solution.py:20", "fix": "n/a", "grounding_status": "in_contract_reachable"},
             {"id": "S2", "category": "SECURITY", "severity": "MEDIUM",
-             "location": "solution.py:25", "fix": "n/a"},
+             "location": "solution.py:25", "fix": "n/a", "grounding_status": "in_contract_reachable"},
             {"id": "S3", "category": "SECURITY", "severity": "HIGH",
-             "location": "solution.py:30", "fix": "n/a"},  # one survives ungrounded-fixed
+             "location": "solution.py:30", "fix": "n/a", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"},  # one survives ungrounded-fixed
         ],
         "verdict": "FAIL",
     }
@@ -1531,6 +1589,10 @@ def test_security_03_clean_genuine_grounded_finding_still_blocks() -> None:
                 "id": "S1",
                 "category": "SECURITY",
                 "severity": "CRITICAL",
+                "grounding_status": "in_contract_reachable",
+                "violated_requirement": "the task requires this behaviour",
+                "code_path": "solution.py:1",
+                "trigger": "the documented input",
                 "location": "solution.py:12",
                 "fix": "only connect to an address that was itself checked",
             },
@@ -1567,9 +1629,196 @@ def test_ceiling_cannot_be_used_to_self_report_ok_around_a_real_high() -> None:
     critic = {
         "defects": [
             {"id": "C1", "category": "SECURITY", "severity": "HIGH",
-             "location": "solution.py:1", "fix": "fix it"},
+             "location": "solution.py:1", "fix": "fix it", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"},
         ],
         "verdict": "OK",  # self-contradictory
     }
     errors = enforce_critic_schema(critic)
     assert errors == ["verdict: is 'OK' but expected 'FAIL' given the defects"]
+
+
+# --- Structured grounding contract: the registered offline matrix ------------
+#
+# The ten cases registered in STRUCTURED_GROUNDING_REGISTRATION.md section 4.
+# Fixtures are shaped after the finding families recorded in the forensic
+# analysis of the two surviving intervention-arm blockers, but no case name, IP
+# range or dataset value appears here or in production logic -- the contract is
+# general or it is nothing.
+#
+# What these prove: the contradiction is now machine-checkable, and every new
+# failure mode fails CLOSED. What they cannot prove: that a live judge classifies
+# honestly. Code cannot verify that a violated_requirement string is a real
+# quotation from the task. That limit is registered in section 5, not papered over.
+
+
+def _grounded_defect(severity: str, **overrides: object) -> dict:
+    """A schema-valid defect at ``severity``; overrides break it deliberately."""
+    base: dict = {
+        "id": "C1",
+        "category": "SECURITY",
+        "severity": severity,
+        "location": "solution.py:20",
+        "fix": "validate before use",
+        "grounding_status": "in_contract_reachable",
+    }
+    if severity in ("CRITICAL", "HIGH"):
+        base.update(
+            {
+                "violated_requirement": "the task requires the returned value to be checked",
+                "code_path": "solution.py:20 -> the unchecked return",
+                "trigger": "an input the declared interface accepts",
+            }
+        )
+    base.update(overrides)
+    return base
+
+
+def _grounded_critic(defects: list[dict]) -> dict:
+    blocking = any(d.get("severity") in ("CRITICAL", "HIGH") for d in defects)
+    return {"defects": defects, "verdict": "FAIL" if blocking else "OK"}
+
+
+# 1 -- a claim contradicting an explicit task guarantee cannot block.
+def test_guarantee_contradicting_claim_cannot_be_schema_valid_blocking() -> None:
+    """The recorded family whose own prose conceded the code was fine as written
+    while still carrying HIGH. Classified honestly, that status can no longer pair
+    with a blocking severity, and the pairing is an error rather than prose."""
+    critic = _grounded_critic(
+        [_grounded_defect("HIGH", grounding_status="contradicts_explicit_guarantee")]
+    )
+    errors = enforce_critic_schema(critic)
+    assert any("cannot carry severity" in e for e in errors)
+
+
+# 2 -- a factually refuted claim cannot block.
+def test_factually_unverified_claim_cannot_be_schema_valid_blocking() -> None:
+    """The recorded family resting on library behavior the interpreter in use
+    refutes. 'factually_unverified' is the honest classification, and it cannot block."""
+    for severity in ("HIGH", "CRITICAL"):
+        errors = enforce_critic_schema(
+            _grounded_critic(
+                [_grounded_defect(severity, grounding_status="factually_unverified")]
+            )
+        )
+        assert any("cannot carry severity" in e for e in errors), severity
+
+
+# 3 -- a genuine, reachable, concretely triggered defect still blocks.
+def test_a_grounded_reachable_security_defect_remains_blocking() -> None:
+    critic = _grounded_critic([_grounded_defect("CRITICAL")])
+    assert enforce_critic_schema(critic) == []
+    merged = verdict.merge([critic], [])
+    assert merged["verdict"] == "FAIL"
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"
+
+
+# 4 -- a broken case resting on ONE properly grounded HIGH stays UNVERIFIED.
+def test_a_single_grounded_high_still_blocks_the_run() -> None:
+    """The registered G1 exposure: roughly seven broken cases rest on a single HIGH
+    with no CRITICAL at some point across runs 50-55. If this contract ever let one
+    through, that is a false pass on a broken case."""
+    critic = _grounded_critic([_grounded_defect("HIGH")])
+    assert enforce_critic_schema(critic) == []
+    merged = verdict.merge([critic], [])
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"
+
+
+# 5 -- missing or empty grounding on a blocking defect fails closed.
+def test_missing_or_empty_grounding_on_a_blocking_defect_fails_closed() -> None:
+    broken_defects = [
+        _grounded_defect("HIGH", violated_requirement=""),
+        _grounded_defect("HIGH", code_path="   "),
+        _grounded_defect("HIGH", trigger=None),
+        {k: v for k, v in _grounded_defect("HIGH").items() if k != "violated_requirement"},
+    ]
+    for broken in broken_defects:
+        critic = _grounded_critic([broken])
+        assert enforce_critic_schema(critic), broken
+        # Fails closed: the critic is rejected wholesale, so no defect of it
+        # survives, and the schema error alone drives the gate to UNVERIFIED.
+        parsed, parse_errors = _parse_critic(json.dumps(critic))
+        assert parsed == {} and parse_errors
+        assert verdict.gate(verdict.merge([], []), True, parse_errors) == "UNVERIFIED"
+
+
+# 6 -- invalid status/severity combinations fail closed.
+def test_invalid_grounding_status_values_fail_closed() -> None:
+    for bad in ("", "unknown", "IN_CONTRACT_REACHABLE", None, 3):
+        errors = enforce_critic_schema(
+            _grounded_critic([_grounded_defect("MEDIUM", grounding_status=bad)])
+        )
+        assert any("grounding_status" in e for e in errors), bad
+
+
+def test_every_non_grounded_status_is_refused_at_every_blocking_severity() -> None:
+    """Exhaustive over the enum rather than a sampled example, so a status added
+    later without a decision about blocking cannot slip through unnoticed."""
+    from engine.verification.rubric import GROUNDED_STATUS, GROUNDING_STATUSES
+
+    for status in GROUNDING_STATUSES - {GROUNDED_STATUS}:
+        for severity in ("CRITICAL", "HIGH"):
+            errors = enforce_critic_schema(
+                _grounded_critic([_grounded_defect(severity, grounding_status=status)])
+            )
+            assert any("cannot carry severity" in e for e in errors), (status, severity)
+
+
+# 7 -- verdict/severity inconsistency still fails closed.
+def test_verdict_severity_inconsistency_still_fails_closed() -> None:
+    """Pre-existing protection, re-pinned against the new schema: a grounded,
+    otherwise perfectly valid blocking defect reported under verdict OK is still
+    rejected. The grounding contract must not have opened a way around it."""
+    critic = {"defects": [_grounded_defect("HIGH")], "verdict": "OK"}
+    errors = enforce_critic_schema(critic)
+    assert errors == ["verdict: is 'OK' but expected 'FAIL' given the defects"]
+
+
+# 8 -- MEDIUM/LOW findings stay reported and non-blocking.
+def test_medium_and_low_findings_are_reported_and_non_blocking() -> None:
+    """The report-don't-suppress property. A concern that cannot ground a blocking
+    claim still reaches defects; only what may block is constrained. Non-blocking
+    defects need a status but none of the three blocking fields."""
+    defects = [
+        _grounded_defect("MEDIUM", id="C1", grounding_status="out_of_contract"),
+        _grounded_defect("LOW", id="C2", grounding_status="factually_unverified"),
+    ]
+    critic = _grounded_critic(defects)
+    assert enforce_critic_schema(critic) == []
+    merged = verdict.merge([critic], [])
+    assert len(merged["defects"]) == 2, "findings are capped, never silenced"
+    assert merged["verdict"] == "OK"
+    assert verdict.gate(merged, True, []) == "OK"
+
+
+# 9 -- automated-gate defects remain independent of judge grounding.
+def test_automated_gate_defects_block_without_any_grounding_fields() -> None:
+    """automated_defects() hardcodes severity=HIGH and never passes through
+    enforce_critic_schema. A gate failure is a code-computed fact, not a model
+    claim, so the grounding contract must not reach it in either direction."""
+    defects = automated_defects([VerificationResult("mypy", False, "error: bad type")])
+    assert "grounding_status" not in defects[0]
+    assert defects[0]["severity"] == "HIGH"
+    merged = verdict.merge([], defects)
+    assert verdict.gate(merged, True, []) == "UNVERIFIED"
+    assert verdict.gate(verdict.merge([], []), False, []) == "UNVERIFIED"
+
+
+# 10 -- schema-failure retry attribution is unchanged.
+def test_grounding_rejection_never_triggers_the_truncation_retry() -> None:
+    """Registration section 7 freezes the retry: one attempt, fired only on a
+    provider-reported max_tokens truncation. A grounding rejection is a complete,
+    parseable response, so it must NOT be retried -- exactly as a verdict
+    inconsistency is not."""
+    ungrounded = json.dumps(
+        _grounded_critic([_grounded_defect("HIGH", grounding_status="out_of_contract")])
+    )
+    gateway = _RecordingGateway(_SequencedProvider([(ungrounded, _COMPLETE)] * 3))
+    critics, schema_errors = _run_lenses_recording(gateway)
+
+    assert len(schema_errors) == 3, "each lens's ungrounded blocker was rejected"
+    assert [c["agent_name"] for c in gateway.calls] == [
+        "judge:correctness",
+        "judge:security",
+        "judge:code-quality",
+    ], "no retry fired for a complete, parseable response"
+    assert critics == [], "a rejected critic contributes no defects"
