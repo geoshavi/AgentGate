@@ -217,6 +217,12 @@ def main() -> None:
         action="store_true",
         help="Validate the dataset and budget, print the plan, make zero LLM calls",
     )
+    bench_parser.add_argument(
+        "--shadow-adjudicate",
+        action="store_true",
+        help="Record admissibility adjudications alongside the run without letting "
+        "them affect any verdict (observation only)",
+    )
     bench_parser.add_argument("--provider", default="anthropic", help="Provider to use")
 
     args = parser.parse_args()
@@ -380,8 +386,17 @@ def main() -> None:
             print(plan_text)
             sys.exit(1 if errors else 0)
 
+        # Verdict-neutral by construction: run_verification puts shadow records
+        # in a key verdict.gate never reads, so this flag changes what is
+        # stored, never what is decided. There is deliberately no CLI flag for
+        # the authoritative `adjudicate` mode -- the two are mutually exclusive
+        # downstream, and leaving only one reachable keeps that unambiguous.
         eval_run, results = run_benchmark(
-            config=config, provider_name=args.provider, judge_model=judge_model, category=args.category
+            config=config,
+            provider_name=args.provider,
+            judge_model=judge_model,
+            category=args.category,
+            shadow_adjudicate=args.shadow_adjudicate,
         )
         print(format_benchmark_report(eval_run, results))
 
