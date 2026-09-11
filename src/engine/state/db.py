@@ -133,6 +133,32 @@ CREATE TABLE IF NOT EXISTS eval_case_defects (
 );
 CREATE INDEX IF NOT EXISTS idx_eval_case_defects_result ON eval_case_defects(eval_case_result_id);
 
+-- Adjudication sidecar. Purely additive: eval_case_defects above is never
+-- written or altered by this, so the original judge defect and its original
+-- severity survive byte-for-byte whatever the adjudicator concluded. One row
+-- per adjudicated defect. admissible_to_block is NULL for a defect that was
+-- never in scope (severity below blocking), 0/1 otherwise.
+CREATE TABLE IF NOT EXISTS eval_case_defect_adjudications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    eval_case_result_id INTEGER NOT NULL REFERENCES eval_case_results(id),
+    lens TEXT NOT NULL,
+    defect_id TEXT NOT NULL,
+    original_severity TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    adjudication_json TEXT NOT NULL,
+    admissible_to_block INTEGER,
+    rule TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    probe_predicate TEXT,
+    probe_argument TEXT,
+    probe_result TEXT,
+    probe_interpreter_version TEXT,
+    adjudicator_version TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_eval_case_defect_adjudications_result
+    ON eval_case_defect_adjudications(eval_case_result_id);
+
 -- One row per canonical judge lens per eval case, always -- including
 -- lenses that ran and found zero defects, so "found nothing" and "never
 -- ran" are distinguishable. defect_count/schema_valid are NULL when
@@ -556,6 +582,49 @@ def record_eval_case_defects(
                 _sqlite_safe(d.get("fix", "")),
             )
             for d in defects
+        ],
+    )
+
+
+def _sqlite_safe_optional(value: object) -> str | None:
+    return _sqlite_safe(value) if isinstance(value, str) else None
+
+
+def record_defect_adjudications(
+    conn: sqlite3.Connection, eval_case_result_id: int, records: list[dict]
+) -> None:
+    """``records`` is a list of ``admissibility.adjudication_record()`` dicts.
+
+    Writes only to the sidecar table. ``eval_case_defects`` is left exactly as
+    ``record_eval_case_defects`` wrote it, so the original defect text and the
+    original severity survive whatever the adjudicator concluded -- an
+    admissibility result is an additional fact about a defect, never a revision
+    of it.
+    """
+    conn.executemany(
+        "INSERT INTO eval_case_defect_adjudications "
+        "(eval_case_result_id, lens, defect_id, original_severity, evidence_json, "
+        "adjudication_json, admissible_to_block, rule, reason, probe_predicate, "
+        "probe_argument, probe_result, probe_interpreter_version, adjudicator_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                eval_case_result_id,
+                _sqlite_safe(str(r.get("lens", ""))),
+                _sqlite_safe(str(r.get("defect_id", ""))),
+                _sqlite_safe(str(r.get("original_severity", ""))),
+                _sqlite_safe(str(r.get("evidence_json", ""))),
+                _sqlite_safe(str(r.get("adjudication_json", ""))),
+                None if r.get("admissible_to_block") is None else int(r["admissible_to_block"]),
+                _sqlite_safe(str(r.get("rule", ""))),
+                _sqlite_safe(str(r.get("reason", ""))),
+                _sqlite_safe_optional(r.get("probe_predicate")),
+                _sqlite_safe_optional(r.get("probe_argument")),
+                _sqlite_safe_optional(r.get("probe_result")),
+                _sqlite_safe_optional(r.get("probe_interpreter_version")),
+                _sqlite_safe(str(r.get("adjudicator_version", ""))),
+            )
+            for r in records
         ],
     )
 

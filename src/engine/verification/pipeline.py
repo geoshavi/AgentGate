@@ -5,7 +5,7 @@ from pathlib import Path
 from engine.runtime.budget import BudgetController
 from engine.runtime.gateway import LLMGateway
 from engine.state.models import VerificationResult
-from engine.verification import verdict
+from engine.verification import admissibility, verdict
 from engine.verification.automated import automated_defects, run_automated_gates
 from engine.verification.judge import run_judge_gates
 
@@ -30,6 +30,7 @@ def run_verification(
     conn: sqlite3.Connection | None,
     timeout_seconds: float | None = None,
     on_schema_failure: Callable[[str, str, list[str]], None] | None = None,
+    adjudicate: bool = False,
 ) -> tuple[str, dict, list[VerificationResult]]:
     """Run the automated + LLM-judge lenses and return the deterministic verdict.
 
@@ -41,6 +42,15 @@ def run_verification(
     raw_response, errors) -> None, forwarded to run_judge_gates unchanged.
     None by default -- production callers (api.py, orchestrator/engine.py)
     never pass it, so their behavior is unaffected; only eval/runner.py does.
+
+    ``adjudicate`` is off by default and no caller passes it yet. When off,
+    ``merged`` carries no admissibility keys and ``verdict.gate`` behaves
+    exactly as it did before the adjudication layer existed. When on, each
+    blocking defect is annotated with ``admissible_to_block``; a deterministic
+    contradiction can drop one out of the blocking set, but nothing is removed
+    from ``merged["defects"]``, so reporting and retry feedback are unchanged.
+    Note the ordering: schema errors and automated-gate failures are still
+    evaluated first inside ``gate``, so neither can be rescued by admissibility.
     """
     automated_results = run_automated_gates(workspace)
     automated_passed = all(r.passed for r in automated_results)
@@ -63,6 +73,8 @@ def run_verification(
     merged = verdict.merge(critic_outputs, script_defects)
     if schema_errors:
         merged = {**merged, "schema_errors": schema_errors}
+    if adjudicate:
+        merged = admissibility.annotate(merged, task_text, code_snapshot)
     status = verdict.gate(merged, automated_passed, schema_errors)
 
     return status, merged, automated_results
