@@ -98,7 +98,15 @@ def adjudication_record(defect: dict, lens: str, task_text: str, code_snapshot: 
     """Build the forensic row for one defect. Original evidence is never overwritten."""
     evidence = extract_evidence(defect)
     adj = adjudicate(defect, evidence, task_text, code_snapshot)
-    decision = _from_facts(adj, evidence)
+    # Same severity scope as decide(): a defect that is not blocking is never
+    # evaluated, and its record says so with a NULL rather than claiming it is
+    # "admissible to block". The facts above are still recorded for it, because
+    # evidence availability is measured over every defect, not just blockers.
+    decision = (
+        _from_facts(adj, evidence)
+        if defect.get("severity") in BLOCKING
+        else _NOT_APPLICABLE
+    )
     probe = adj.probe
 
     return {

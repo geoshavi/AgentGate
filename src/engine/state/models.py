@@ -181,3 +181,9 @@ class EvalCaseResult:
     lens_results: list[EvalCaseLensResult] = field(default_factory=list)
     automated_gate_results: list[VerificationResult] = field(default_factory=list)
     schema_failures: list[EvalCaseSchemaFailure] = field(default_factory=list)
+    # Sidecar adjudication records, populated only when run_case was given
+    # shadow_adjudicate=True. Carried here for the same reason as `defects`:
+    # run_benchmark() needs the eval_case_result_id before it can write them,
+    # and that id does not exist until record_eval_case_result() has run. Empty
+    # by default, so every existing caller is unaffected.
+    shadow_adjudications: list[dict] = field(default_factory=list)

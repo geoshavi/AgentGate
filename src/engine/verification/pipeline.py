@@ -31,6 +31,7 @@ def run_verification(
     timeout_seconds: float | None = None,
     on_schema_failure: Callable[[str, str, list[str]], None] | None = None,
     adjudicate: bool = False,
+    shadow_adjudicate: bool = False,
 ) -> tuple[str, dict, list[VerificationResult]]:
     """Run the automated + LLM-judge lenses and return the deterministic verdict.
 
@@ -51,7 +52,27 @@ def run_verification(
     from ``merged["defects"]``, so reporting and retry feedback are unchanged.
     Note the ordering: schema errors and automated-gate failures are still
     evaluated first inside ``gate``, so neither can be rescued by admissibility.
+
+    ``shadow_adjudicate`` is the *observation-only* counterpart, and is a
+    deliberately separate flag rather than a mode of ``adjudicate``. It computes
+    the same adjudication records but leaves ``merged["defects"]`` untouched, so
+    nothing it concludes can reach ``verdict._has_blocking``; the records travel
+    out under the separate ``merged["shadow_adjudications"]`` key. The
+    authoritative verdict is byte-identical to ``shadow_adjudicate=False`` on the
+    same inputs -- that equivalence is what the flag exists to preserve, and it
+    is pinned by tests/test_shadow_adjudication.py.
+
+    The two flags are mutually exclusive. One annotates the dict the gate reads
+    and the other must not; silently ordering them would make it impossible to
+    tell from a call site whether admissibility was authoritative.
     """
+    if adjudicate and shadow_adjudicate:
+        raise ValueError(
+            "adjudicate and shadow_adjudicate are mutually exclusive -- "
+            "adjudicate makes admissibility authoritative, shadow_adjudicate "
+            "records it without effect. Pass exactly one."
+        )
+
     automated_results = run_automated_gates(workspace)
     automated_passed = all(r.passed for r in automated_results)
     script_defects = automated_defects(automated_results)
@@ -75,9 +96,42 @@ def run_verification(
         merged = {**merged, "schema_errors": schema_errors}
     if adjudicate:
         merged = admissibility.annotate(merged, task_text, code_snapshot)
+    elif shadow_adjudicate:
+        merged = {
+            **merged,
+            "shadow_adjudications": _shadow_adjudications(merged, task_text, code_snapshot),
+        }
     status = verdict.gate(merged, automated_passed, schema_errors)
 
     return status, merged, automated_results
+
+
+def _shadow_adjudications(merged: dict, task_text: str, code_snapshot: str) -> list[dict]:
+    """Build sidecar adjudication records without touching a single defect.
+
+    Every defect is recorded, not only the blocking ones, so the shadow data can
+    answer questions about evidence availability across the whole population --
+    non-blocking defects come back with ``admissible_to_block = None``.
+
+    A failure here is bookkeeping, never verification: if building a record
+    raises, that record is dropped and the run continues. Shadow observation must
+    not be able to fail a case that would otherwise have been decided.
+    """
+    records = (
+        _shadow_record(defect, task_text, code_snapshot)
+        for defect in merged.get("defects", []) or []
+        if isinstance(defect, dict)
+    )
+    return [record for record in records if record is not None]
+
+
+def _shadow_record(defect: dict, task_text: str, code_snapshot: str) -> dict | None:
+    try:
+        return admissibility.adjudication_record(
+            defect, defect.get("lens") or "automated", task_text, code_snapshot
+        )
+    except Exception:  # noqa: BLE001 -- shadow bookkeeping never breaks a verdict
+        return None
 
 
 def build_retry_feedback(merged: dict) -> str:

@@ -171,6 +171,7 @@ def run_case(
     run_id: int,
     eval_run_id: int,
     timeout_seconds: float | None = None,
+    shadow_adjudicate: bool = False,
 ) -> EvalCaseResult:
     # Deterministic, not random: reproducible for debugging, and unique
     # across every eval run ever (eval_run_id is a fresh autoincrement each
@@ -218,6 +219,7 @@ def run_case(
             conn=conn,
             timeout_seconds=timeout_seconds,
             on_schema_failure=_collect_schema_failure,
+            shadow_adjudicate=shadow_adjudicate,
         )
         actual_verdict = status
         detected_categories = sorted(
@@ -250,6 +252,9 @@ def run_case(
         passed=passed,
         error=error,
         defects=merged.get("defects", []) if merged is not None else [],
+        shadow_adjudications=(
+            merged.get("shadow_adjudications", []) if merged is not None else []
+        ),
         lens_results=_build_lens_results(metrics, merged),
         automated_gate_results=automated_results,
         schema_failures=schema_failures,
@@ -304,6 +309,7 @@ def run_benchmark(
     provider_name: str,
     judge_model: str,
     category: str | None = None,
+    shadow_adjudicate: bool = False,
 ) -> tuple[EvalRun, list[EvalCaseResult]]:
     cases = select_cases(category)
     gateway = LLMGateway.from_config(provider_name, config)
@@ -327,12 +333,18 @@ def run_benchmark(
                 conn=conn,
                 run_id=run_id,
                 eval_run_id=eval_run_id,
+                shadow_adjudicate=shadow_adjudicate,
             )
             eval_case_result_id = db.record_eval_case_result(conn, result)
             db.record_eval_case_defects(conn, eval_case_result_id, result.defects)
             db.record_eval_case_lens_results(conn, eval_case_result_id, result.lens_results)
             db.record_eval_case_automated_gates(conn, eval_case_result_id, result.automated_gate_results)
             db.record_eval_case_schema_failures(conn, eval_case_result_id, result.schema_failures)
+            # Sidecar only. eval_case_defects above already holds the original
+            # defect rows and is never revised by an adjudication conclusion.
+            db.record_defect_adjudications(
+                conn, eval_case_result_id, result.shadow_adjudications
+            )
             conn.commit()
             results.append(result)
 

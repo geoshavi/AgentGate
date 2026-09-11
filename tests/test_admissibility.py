@@ -640,6 +640,21 @@ def test_adjudication_records_persist_without_touching_eval_case_defects(
     assert "admissible_to_block" not in cols  # nothing added to the original table
 
 
+def test_adjudication_record_marks_nonblocking_defects_not_applicable() -> None:
+    # Same severity scope as decide(): a MEDIUM defect is never evaluated, so its
+    # record must not claim it is admissible to block.
+    for severity in ("MEDIUM", "LOW"):
+        record = admissibility.adjudication_record(
+            _defect(severity=severity, minimal_trigger="user=None"),
+            "correctness",
+            EDGE_02_TASK,
+            EDGE_02_CLEAN,
+        )
+        assert record["admissible_to_block"] is None
+        assert record["rule"] == "not-applicable"
+        assert record["original_severity"] == severity
+
+
 def test_adjudication_record_captures_forensic_fields(tmp_path: Path) -> None:
     defect = _defect(
         severity="HIGH",
