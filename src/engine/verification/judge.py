@@ -36,46 +36,31 @@ RESPONSE_INSTRUCTION = (
     "\n\nRespond with ONLY a JSON object, no prose before or after, no markdown fences:\n"
     '{"defects": [{"id": "C1", "category": "CORRECTNESS|SECURITY|CODE-QUALITY", '
     '"severity": "CRITICAL|HIGH|MEDIUM|LOW", '
-    '"location": "path:line or description", "fix": "what to change", '
-    '"grounding_status": "in_contract_reachable|out_of_contract|'
-    'contradicts_explicit_guarantee|factually_unverified", '
-    '"violated_requirement": "...", "code_path": "...", "trigger": "..."}], '
+    '"location": "path:line or description", "fix": "what to change"}], '
     '"verdict": "OK|FAIL"}\n'
     "verdict must be 'FAIL' iff at least one defect has severity CRITICAL or HIGH, else 'OK'. "
     "category must be exactly one of CORRECTNESS, SECURITY, or CODE-QUALITY — use the "
     "closest match, never invent a more specific label. "
     "Return {\"defects\": [], \"verdict\": \"OK\"} if you find nothing to flag."
-    # Structured grounding contract, per
-    # docs/benchmark/STRUCTURED_GROUNDING_REGISTRATION.md section 2. Supersedes the prose
-    # ceiling registered as GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 3 and
-    # applied at fd8f136. The measured failure that block could not address: the judge
-    # performed the grounding test in prose and did not propagate its own conclusion into
-    # `severity`, because the schema gave that conclusion nowhere to go. Here the
-    # classification is a required field with a closed enum, so the contradiction is
-    # machine-checkable rather than merely discouraged. Reporting is still unaffected --
-    # every concern is still emitted; only what may block is constrained. Placement stays
-    # at the end of the string, as before, so placement is not a second variable.
+    # Grounded-severity ceiling, appended verbatim per
+    # docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 3. It constrains
+    # what severity a finding may claim; it never suppresses one. Reporting is explicitly
+    # unaffected, so a concern that cannot ground a blocking claim still reaches defects at
+    # MEDIUM rather than disappearing -- the property that distinguishes this from Phase 4's
+    # reverted reporting prohibition (be990c7). Placement is the end of the string, as
+    # registered, so placement is not a second variable.
     "\n"
     "Severity is what makes a defect blocking, so assign it from evidence, not from concern. "
-    "Every defect must carry grounding_status, classifying what its claim actually rests on: "
-    "'in_contract_reachable' — reachable under the interface and the guarantees the task "
-    "states; 'out_of_contract' — rests on usage the declared interface or the task's stated "
-    "scope excludes; 'contradicts_explicit_guarantee' — rests on a premise the task text "
-    "explicitly rules out; 'factually_unverified' — rests on library or platform behavior "
-    "you have not demonstrated from the code supplied above. "
-    "Only 'in_contract_reachable' may carry CRITICAL or HIGH, and such a defect must also "
-    "give violated_requirement (the exact requirement in the task it fails to meet), "
-    "code_path (the concrete path in the supplied code), and trigger (the concrete input or "
-    "execution condition that produces the failure) — each non-empty. If you cannot fill all "
-    "three from the task text and the supplied code, the correct status is one of the other "
-    "three and the severity is at most MEDIUM. "
-    "These fields must agree with each other and with your own text: if your explanation or "
-    "fix says the code is correct as written, that the concern is mitigated, that no change "
-    "is needed, or that the risk depends on a caller or platform behaving in a way the task "
-    "does not state, then the status is not 'in_contract_reachable' and the severity is not "
-    "blocking. Reporting is unaffected: every concern you would otherwise raise must still "
-    "appear in defects, with its status recorded; only what may block is constrained. Never "
-    "raise a severity to signal importance, and never lower a violation you can ground."
+    "Before assigning CRITICAL or HIGH, name either (a) the exact requirement in the task "
+    "above that the code fails to meet, or (b) a concrete input or condition, permitted by "
+    "the code's own declared interface, that produces the failure. If you can name neither "
+    "— the finding rests on a caller violating a declared parameter type, on a threat the "
+    "task explicitly places outside this code's responsibility, on a possible but "
+    "undemonstrated library or platform behavior, or on hardening the task did not ask for "
+    "— still report the defect, but assign at most MEDIUM. Reporting is unaffected: every "
+    "concern you would otherwise raise must still appear in defects; only its severity is "
+    "constrained. Never raise a severity to signal importance, and never lower a violation "
+    "you can ground."
 )
 
 

@@ -1,61 +1,6 @@
 from typing import Any
 
-from engine.verification.rubric import (
-    BLOCKING,
-    BLOCKING_GROUNDING_KEYS,
-    CRITIC_KEYS,
-    DEFECT_KEYS,
-    DIMENSIONS,
-    GROUNDED_STATUS,
-    GROUNDING_STATUSES,
-    SEVERITIES,
-)
-
-
-def _check_grounding(index: int, defect: dict) -> list[str]:
-    """Grounding rules for one defect.
-
-    Two rules, and deliberately no third:
-
-    1. ``grounding_status`` is one of the closed enum, at every severity.
-    2. A blocking severity requires the grounded status *and* three non-empty
-       supporting fields.
-
-    **Nothing here demotes anything.** A blocking defect with absent, empty or
-    contradictory grounding produces an error, and an error fails the whole
-    critic closed to UNVERIFIED via ``verdict.gate``. Silently rewriting such a
-    defect to MEDIUM would convert a missing justification into a passing run,
-    which is the one outcome this contract exists to make impossible -- roughly
-    a third of the benchmark's broken cases rest on a single blocking defect at
-    some point, so that blast radius is measured, not hypothetical.
-    """
-    errs: list[str] = []
-    status = defect.get("grounding_status")
-    if status not in GROUNDING_STATUSES:
-        errs.append(
-            f"defects[{index}].grounding_status: must be one of {sorted(GROUNDING_STATUSES)}"
-        )
-
-    if defect.get("severity") not in BLOCKING:
-        return errs
-
-    if status in GROUNDING_STATUSES and status != GROUNDED_STATUS:
-        # The model classified its own finding as unable to support blocking and
-        # then assigned a blocking severity anyway. That contradiction was
-        # previously expressible only in prose, where nothing could see it.
-        errs.append(
-            f"defects[{index}]: grounding_status {status!r} cannot carry severity "
-            f"{defect.get('severity')!r}; only {GROUNDED_STATUS!r} may block"
-        )
-
-    for key in sorted(BLOCKING_GROUNDING_KEYS):
-        value = defect.get(key)
-        if not isinstance(value, str) or not value.strip():
-            errs.append(
-                f"defects[{index}].{key}: a {defect.get('severity')} defect requires a "
-                f"non-empty {key}"
-            )
-    return errs
+from engine.verification.rubric import BLOCKING, CRITIC_KEYS, DEFECT_KEYS, DIMENSIONS, SEVERITIES
 
 
 def enforce_critic_schema(critic: Any) -> list[str]:
@@ -93,8 +38,6 @@ def enforce_critic_schema(critic: Any) -> list[str]:
             # defect -- query eval_case_schema_failures for error_detail
             # LIKE '%.category:%' to check.
             errs.append(f"defects[{i}].category: must be one of {list(DIMENSIONS)}")
-
-        errs.extend(_check_grounding(i, d))
 
     verdict = critic.get("verdict")
     if verdict not in ("OK", "FAIL"):

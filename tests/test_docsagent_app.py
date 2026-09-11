@@ -343,7 +343,7 @@ def test_a_doc_only_change_reaches_passed_through_real_agentgate(tmp_path: Path)
 
 def test_a_judge_blocked_change_ends_unverified_not_passed(tmp_path: Path) -> None:
     defect = [
-        {"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "HANDOVER.md:1", "fix": "f", "grounding_status": "in_contract_reachable", "violated_requirement": "the task requires this behaviour", "code_path": "solution.py:1", "trigger": "the documented input"}
+        {"id": "C1", "category": "CORRECTNESS", "severity": "HIGH", "location": "HANDOVER.md:1", "fix": "f"}
     ]
     result, _ = go(tmp_path, DOCS_TURNS, judge_rounds=[critic(defect)])
 

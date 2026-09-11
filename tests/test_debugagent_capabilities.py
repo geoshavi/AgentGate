@@ -323,10 +323,6 @@ def test_agentgate_is_still_required_after_proven(tmp_path: Path) -> None:
                 "id": "C1",
                 "category": "CORRECTNESS",
                 "severity": "HIGH",
-                "grounding_status": "in_contract_reachable",
-                "violated_requirement": "the task requires this behaviour",
-                "code_path": "solution.py:1",
-                "trigger": "the documented input",
                 "location": "cart.py:22",
                 "fix": "something the judge wants",
             }
@@ -351,10 +347,6 @@ def test_lens_attribution_still_reaches_the_debug_report(tmp_path: Path) -> None
                 "id": "C1",
                 "category": "CORRECTNESS",
                 "severity": "HIGH",
-                "grounding_status": "in_contract_reachable",
-                "violated_requirement": "the task requires this behaviour",
-                "code_path": "solution.py:1",
-                "trigger": "the documented input",
                 "location": "cart.py:22",
                 "fix": "guard the empty case",
             }
