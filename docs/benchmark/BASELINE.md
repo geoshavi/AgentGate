@@ -161,6 +161,75 @@ Registered in `docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md`. Bas
   mechanism that demotes blocking defects automatically has a correspondingly wider blast
   radius; that is why automatic demotion is forbidden by the new registration's S2.
 
+## Structured grounding — L0 (dataset v6, REJECTED AT L0)
+
+Registered in `docs/benchmark/STRUCTURED_GROUNDING_REGISTRATION.md` §6, committed at
+`2cc6e59` **before** this run existed. Intervention SHA
+`9d20c33f43cf2b061d1532b8a151a563f3b96e6a` — closed-enum `grounding_status` on every
+defect, cross-checked against severity, with three non-empty grounding fields required for
+CRITICAL/HIGH (`rubric.py`, `schema.py`, `judge.py` `RESPONSE_INSTRUCTION`).
+
+| run | date | commit sha | dataset_version | accuracy | false_pass | false_unverified | cost | what changed |
+|-----|------------|------------|------------------|----------------|-------------|-------------------|---------|------------------------------------------|
+| 57  | 2026-09-10 | 9d20c33    | v6               | 38/40 (95.0%)  | **1**       | 1                 | $0.9057 | L0 smoke, N=1, structured-grounding contract |
+
+- **Run 57 is VALID, not VOID.** Integrity gate passed on every check read from a
+  scratchpad copy of `.engine/state.db`: **0** `eval_case_results.error` rows, 120/120
+  `eval_case_lens_results.call_status = 'ok'`, 120/120 `eval_case_automated_gates.passed = 1`,
+  40/40 cases scored. `eval_runs.git_commit_sha` records
+  `9d20c33f43cf2b061d1532b8a151a563f3b96e6a` exactly — the run was executed from a detached
+  checkout of that SHA against a clean tree, so its attribution is correct by construction.
+  The process exited 1 because `cli.py` ends `sys.exit(0 if eval_run.false_pass == 0 else 1)`;
+  that is the CLI signalling a false pass, **not** a crash or an incomplete run.
+- **DECISION: REJECT, under the pre-registered L0-a / R1 rule** (`false_pass >= 1`, zero
+  tolerance). The rule fired on the first live measurement of the intervention.
+- **False-pass case: `quality-04-broken`** — `expected_verdict = 'UNVERIFIED'`,
+  `actual_verdict = 'OK'`. Its complete defect record for this run is
+  `correctness/MEDIUM`, `code-quality/MEDIUM`, `code-quality/LOW`: **zero CRITICAL or HIGH
+  defects from any lens.** This is the signature of the adverse risk the registration
+  pre-registered at §5 — a blocking finding relocated to MEDIUM rather than suppressed —
+  and on a broken case that is a false pass.
+- **R1 is absolute and was not waived.** `quality-04-broken` also produced the one false
+  pass in the grounded-severity baseline arm (run 52, SHA `16309b5`), so this case is a
+  known background risk at more than one configuration. The registration states in advance
+  that the mandatory attribution analysis **cannot reverse the REJECT**, and it has not
+  been used to. The asymmetry was accepted when the rule was written, precisely so it could
+  not be argued away once it fired.
+- **Schema failures: 4** — below the L0-b abort threshold of 6, and therefore not an
+  independent stop. Attribution, recorded because it bears on any future design: all four
+  are `verdict`/`defects` consistency violations raised by the **pre-existing** check at
+  `schema.py:99-108` (`security-02-broken × code-quality`, `security-04-broken ×
+  code-quality`, both `verdict 'FAIL'` with no blocking defect; `security-04-clean ×
+  correctness` and `× security`, both `verdict 'OK'` alongside a blocking defect). **None
+  is a novel grounding-specific rejection**, i.e. none is a defect refused for carrying a
+  non-`in_contract_reachable` status or an empty grounding field. The new contract's own
+  validation surface did not visibly fire in this run.
+- **Per-case observations — descriptive only, and they decide nothing.**
+  `edge_case-02-clean` returned **OK**; `security-04-clean` returned **UNVERIFIED** with
+  **0** blocking defects (both its `correctness` and `security` lenses schema-failed, so no
+  defect was persisted for them). **`edge_case-02-clean` passing in this single run is not
+  evidence of efficacy.** n=1, no concurrent baseline arm was run, and the registration
+  states that L0 may conclude nothing except "do not proceed". No efficacy claim is made or
+  may be cited from run 57.
+- **No Stage 1 is authorized, and none was run.** Stage 1 (N=4 per arm) and Stage 2 (N=8)
+  were never executed. The experiment terminated at L0 on a safety guardrail, so its
+  ACCEPT criteria (A1-A7) were never evaluated and no ACCEPT, INCONCLUSIVE-per-registration,
+  or futility verdict exists to cite.
+- **Run 57 remains in this table permanently, after the rollback.** Per the registration's
+  §6.14 rollback rule, only the configuration reverts; the measurement does not. Run 57 is
+  the sole live measurement that will ever exist of the structured-grounding configuration
+  unless a new experiment is registered, and it is a **negative result recorded with the
+  same weight as a positive one**.
+- **Cost: $0.905672**, 690,122 ms wall time (~11.5 min), $0.022642 mean per case.
+  Against the registration's $0.90 planning estimate for this run, which was flagged there
+  as unmeasured. Total spend for the whole experiment was one run — the stop-loss and the
+  Stage 1 budget were never approached, which is the L0 design working as intended.
+- **Configuration note for whoever reads this next.** Reverting `9d20c33` restores the
+  `8dc2528` production state, which is byte-identical under `src/` to `fd8f136` — the
+  **prose ceiling**, itself closed INCOMPLETE / INCONCLUSIVE. Rollback therefore does not
+  return the engine to a neutral pre-experiment configuration; it returns it to a second
+  unvalidated one. That is a statement about the code, not a measurement.
+
 ## Notes
 
 - Runs 6-9 were executed on an identical commit (942f509) and show a spread of 29-32/40 correct verdicts (72.5%-80.0%), i.e. a ±3/40 noise floor. Single-run deltas smaller than this are not interpretable as real changes.

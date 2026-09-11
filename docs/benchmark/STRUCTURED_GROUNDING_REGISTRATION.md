@@ -1,6 +1,13 @@
 # Pre-registration — Structured Grounding Contract on the Critic Schema
 
-**Status: PRE-REGISTERED. OFFLINE IMPLEMENTATION AUTHORIZED. NO LIVE RUN AUTHORIZED.**
+**Status: CLOSED — REJECTED AT L0 (2026-09-10).** L0 executed once as run **57** at
+`9d20c33`; guardrail **R1 / L0-a fired** (`false_pass = 1`, `quality-04-broken`). Stage 1
+and Stage 2 were never run. The intervention is rolled back. **No efficacy claim exists.**
+See §9 for the outcome; §6's decision rules are preserved unedited, exactly as registered
+before the run.
+
+*Prior status, superseded: PRE-REGISTERED. OFFLINE IMPLEMENTATION AUTHORIZED. NO LIVE RUN
+AUTHORIZED.*
 
 | Record | Value |
 |---|---|
@@ -621,3 +628,78 @@ The only production diff authorized is: `rubric.py` (additive constants + `DEFEC
   recorded as future work.
 - Existing test fixtures that construct critic defects require the new required key.
   Fixtures exercising `verdict.merge`/`gate` only are unaffected.
+
+## 9. OUTCOME — REJECTED AT L0 (2026-09-10)
+
+**Nothing in §§0-8 has been edited in light of this result.** The decision rules in §6 stand
+exactly as committed at `2cc6e59`, before run 57 existed. This section records what
+happened and is appended, never retrofitted.
+
+### 9.1 What was executed
+
+| Item | Value |
+|---|---|
+| Stage executed | **L0 only** — one run |
+| Run ID | **57** |
+| Recorded `git_commit_sha` | `9d20c33f43cf2b061d1532b8a151a563f3b96e6a` (exact; run made from a detached checkout of that SHA against a clean tree) |
+| Dataset | v6 |
+| Accuracy | 38/40 (95.0%) — **descriptive only** |
+| `false_pass` | **1** — `quality-04-broken` |
+| `false_unverified` | 1 — `security-04-clean` |
+| Schema failures | 4 (below the L0-b threshold of 6) |
+| Error rows | **0** — the run is **VALID, not VOID** |
+| Cost | $0.905672 |
+
+**Stage 1 was never run. Stage 2 was never run.** N=4 per arm and N=8 per arm were never
+reached; no baseline arm at `8dc2528` was executed under this registration. A1-A7 were
+therefore never evaluated, and **no ACCEPT, no registered-INCONCLUSIVE, and no futility
+verdict exists or may be cited.**
+
+### 9.2 The rule that fired
+
+**L0-a / R1 — `false_pass >= 1`, zero tolerance → REJECT.**
+
+`quality-04-broken` returned `OK` against an expected `UNVERIFIED`. Its full defect record
+for run 57 is `correctness/MEDIUM`, `code-quality/MEDIUM`, `code-quality/LOW` — **zero
+CRITICAL or HIGH defects from any lens.** That is the shape §5 registered as this design's
+primary hazard: the finding is reported, not suppressed, but at a severity that cannot
+block, and on a broken case that is a false pass.
+
+**R1 was not waived, and the historical precedent does not weaken it.** The same case
+produced the one false pass in the grounded-severity baseline arm (run 52, SHA `16309b5`),
+so it is a known background risk at more than one configuration. §6.11 states in advance
+that the mandatory attribution analysis **cannot reverse the REJECT**, and gives the
+reason: an escape hatch labelled "not our fault" is how zero tolerance decays into a
+preference. The rule is applied as written.
+
+### 9.3 What this result does and does not establish
+
+**Does not establish efficacy — no efficacy claim is made.** `edge_case-02-clean` returned
+`OK` in run 57. That is **descriptive only**: n=1, no concurrent baseline arm was run, and
+§6.7 states that L0 may conclude nothing except "do not proceed". It is not evidence the
+contract works, and must never be cited as such.
+
+`security-04-clean` remained **UNVERIFIED** with **0** blocking defects — both its
+`correctness` and `security` lenses schema-failed on the pre-existing verdict/defects
+consistency check, so no defect was persisted. The intervention did not resolve this case.
+
+**On the new validation surface.** All four schema failures were raised by the
+**pre-existing** check at `schema.py:99-108`, not by `_check_grounding`. No defect was
+observably refused for carrying a non-`in_contract_reachable` status or an empty grounding
+field. Combined with §8's note that grounding fields are **not persisted**, this means run
+57 provides **no observation of the grounding mechanism itself** — only of its downstream
+severity consequences. That limitation was registered at §6.4 before the run, not
+discovered after it.
+
+### 9.4 Disposition
+
+- The intervention is **rolled back** by revert commit (history preserved; no reset).
+- **Run 57 stays in `BASELINE.md` permanently**, per §6.14. Only the configuration reverts.
+- This is a **negative result, retained with the same weight as a positive one**, and is
+  not to be quietly dropped, re-sliced, or re-registered under a new name (§6.17).
+- It is the **third** failure of grounding-style intervention on this judge — after Phase 4's
+  reporting prohibition (`be990c7`, INCONCLUSIVE) and the prose ceiling (`fd8f136`, closed
+  INCOMPLETE) — and the **first to fail on safety rather than on efficacy or interruption.**
+  §6.17 anticipated exactly this reading: a REJECT under R1 is the more important negative
+  result, because it confirms the registered adverse risk empirically.
+- **No replacement experiment is designed or authorized by this closure.**
