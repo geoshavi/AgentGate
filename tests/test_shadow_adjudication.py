@@ -11,6 +11,7 @@ path, which annotates the dict that ``gate`` reads. Combining the two is
 rejected rather than silently ordered.
 """
 
+import json
 import sqlite3
 from decimal import Decimal
 from pathlib import Path
@@ -77,9 +78,11 @@ def _run(
     *,
     schema_errors: list[str] | None = None,
     automated_ok: bool = True,
+    task: str = TASK,
+    code: str = CLEAN,
     **kwargs,
 ):
-    (tmp_path / "solution.py").write_text(CLEAN, encoding="utf-8")
+    (tmp_path / "solution.py").write_text(code, encoding="utf-8")
     monkeypatch.setattr(
         pipeline,
         "run_automated_gates",
@@ -89,7 +92,7 @@ def _run(
     monkeypatch.setattr(
         pipeline,
         "run_judge_gates",
-        lambda gateway, budget, model, task, code, **kw: (
+        lambda gateway, budget, model, task_arg, code_arg, **kw: (
             [{"defects": defects, "verdict": "FAIL" if defects else "OK"}],
             list(schema_errors or []),
         ),
@@ -99,7 +102,7 @@ def _run(
         LLMGateway(_FakeProvider()),
         BudgetController(max_tokens=100_000, planned_budget=Decimal("1.00")),
         "fake-model",
-        TASK,
+        task,
         run_id=1,
         task_id="task-1",
         conn=None,
@@ -516,3 +519,306 @@ def test_sqlite_connection_is_read_only_safe_for_replay(tmp_path: Path) -> None:
             ro.execute("INSERT INTO t VALUES (1)")
     finally:
         ro.close()
+
+
+# ==========================================================================
+# Contract evidence mining wired into the shadow-only sidecar
+# (CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md). Every property proven
+# above for shadow adjudication in general must still hold once the sidecar
+# additionally mines evidence from a defect's own free text -- these tests
+# exercise that through the real pipeline.run_verification() path, not the
+# miner or admissibility.decide() in isolation (already covered by
+# tests/test_evidence_mining.py and tests/test_admissibility.py).
+# ==========================================================================
+
+QUALITY_04_TASK = (
+    "Implement classify_order(total, is_member, has_coupon, in_stock) -> str. Return "
+    "'rejected' when not in_stock. Otherwise an order is high-value when total is "
+    "strictly greater than 100, and the tier is: members with a coupon get "
+    "'vip_discount' when high-value and 'member_coupon_discount' otherwise; members "
+    "without a coupon get 'member_discount' when high-value and 'member_standard' "
+    "otherwise; non-members get 'coupon_discount' with a coupon and 'standard' "
+    "without. Define the high-value threshold once as a single named constant."
+)
+QUALITY_04_BROKEN = (
+    "def classify_order(total: float, is_member: bool, has_coupon: bool, in_stock: bool) -> str:\n"
+    "    if in_stock:\n"
+    "        if is_member:\n"
+    "            if has_coupon:\n"
+    "                if total > 100:\n"
+    '                    return "vip_discount"\n'
+    "                else:\n"
+    '                    return "member_coupon_discount"\n'
+    "            else:\n"
+    "                if total > 100:\n"
+    '                    return "member_discount"\n'
+    "                else:\n"
+    '                    return "member_standard"\n'
+    "        else:\n"
+    "            if has_coupon:\n"
+    '                return "coupon_discount"\n'
+    "            else:\n"
+    '                return "standard"\n'
+    "    else:\n"
+    '        return "rejected"\n'
+)
+
+SEC_03_TASK = (
+    "Implement generate_reset_token() -> str returning a random 32-character hex "
+    "token for password-reset links."
+)
+SEC_03_BROKEN = (
+    "import random\n\n\n"
+    "def generate_reset_token() -> str:\n"
+    '    return "".join(random.choice("0123456789abcdef") for _ in range(32))\n'
+)
+
+EDGE_02_BROKEN = (
+    "def get_user_email(user: dict) -> str | None:\n"
+    '    return user["profile"]["email"]\n'
+)
+
+SEC_04_TASK = (
+    "Implement resolve_safe_fetch_target(host) -> str | None used to guard a URL-preview "
+    "feature against fetching internal/private network addresses (SSRF). Return the network "
+    "address the fetch must connect to, or None when the host has no safe address. The "
+    "caller connects to the address you return and does not look the host up again, so the "
+    "address you return must be one you checked."
+)
+SEC_04_CLEAN = (
+    "import ipaddress\n"
+    "import socket\n"
+    "\n"
+    "\n"
+    "def _is_public(addr: str) -> bool:\n"
+    "    ip = ipaddress.ip_address(addr)\n"
+    "    return not (ip.is_private or ip.is_loopback)\n"
+    "\n"
+    "\n"
+    "def resolve_safe_fetch_target(host: str) -> str | None:\n"
+    "    infos = socket.getaddrinfo(host, None)\n"
+    "    addresses = [str(info[4][0]) for info in infos]\n"
+    "    if not all(_is_public(addr) for addr in addresses):\n"
+    "        return None\n"
+    "    return addresses[0]\n"
+)
+SEC_04_BROKEN = (
+    "import socket\n"
+    "\n"
+    "\n"
+    "def resolve_safe_fetch_target(host: str) -> str | None:\n"
+    "    return socket.gethostbyname(host)\n"
+)
+
+_MINED_HIGH = _defect(
+    id="C1",
+    category="CORRECTNESS",
+    severity="HIGH",
+    location='solution.py: user.get("profile")',
+    fix=(
+        "Guard against user not being a dict (e.g., None or other type) by checking "
+        "isinstance(user, dict) before calling .get, to avoid AttributeError."
+    ),
+)
+
+
+def test_shadow_mining_a_actual_verdict_unchanged_with_mining_enabled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A: the miner recognizes this defect's text and would, under shadow, mark it
+    inadmissible -- but the ACTUAL verdict must be identical with mining on vs off,
+    exactly like every other shadow-adjudication property proven above."""
+    off_status, off_merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH])
+    on_status, on_merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH], shadow_adjudicate=True)
+
+    assert on_status == off_status == "UNVERIFIED"
+    assert on_merged["defects"] == off_merged["defects"]
+    assert on_merged["verdict"] == off_merged["verdict"]
+    assert "minimal_trigger" not in on_merged["defects"][0]  # mining never touches the original
+    assert set(on_merged) - set(off_merged) == {"shadow_adjudications"}
+
+
+def test_shadow_mining_b_edge_case_02_clean_mined_and_shadow_inadmissible_but_still_blocks(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """B."""
+    status, merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH], shadow_adjudicate=True)
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] == "user=None"
+    assert record["rule"] == "declared-interface"
+    assert record["admissible_to_block"] is False
+    # non-authoritative: the actual verdict still blocks
+    assert status == "UNVERIFIED"
+    assert verdict._has_blocking(merged) is True
+
+
+def test_shadow_mining_c_quality_04_broken_miner_emits_nothing_blocker_survives(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """C."""
+    defect = _defect(
+        id="C1",
+        category="CODE-QUALITY",
+        severity="HIGH",
+        location="solution.py: total > 100 (used twice)",
+        fix=(
+            "Define a module-level constant, e.g. HIGH_VALUE_THRESHOLD = 100, and replace "
+            "both literal comparisons 'total > 100' with 'total > HIGH_VALUE_THRESHOLD' as "
+            "explicitly requested by the task."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=QUALITY_04_TASK,
+        code=QUALITY_04_BROKEN,
+        shadow_adjudicate=True,
+    )
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_shadow_mining_d_security_03_broken_miner_emits_nothing_sole_blocker_survives(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """D."""
+    defect = _defect(
+        category="SECURITY",
+        severity="HIGH",
+        location="solution.py: generate_reset_token",
+        fix=(
+            "random.choice over a fixed alphabet is not cryptographically secure; use "
+            "secrets.token_hex instead."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=SEC_03_TASK,
+        code=SEC_03_BROKEN,
+        shadow_adjudicate=True,
+    )
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_shadow_mining_e_edge_case_02_broken_no_unsafe_hit_remains_blocked(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """E."""
+    defect = _defect(
+        location='solution.py: user["profile"]["email"]',
+        fix=(
+            "Missing handling for an absent 'profile' or 'email' key: this raises "
+            "KeyError instead of returning None."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=TASK,
+        code=EDGE_02_BROKEN,
+        shadow_adjudicate=True,
+    )
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_shadow_mining_f_security_04_broken_no_unsafe_hit_remains_blocked(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """F."""
+    defect = _defect(
+        category="SECURITY",
+        location="solution.py: resolve_safe_fetch_target",
+        fix=(
+            "No validation of the resolved address at all; internal/private addresses "
+            "are never rejected, allowing SSRF against internal services."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=SEC_04_TASK,
+        code=SEC_04_BROKEN,
+        shadow_adjudicate=True,
+    )
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_shadow_mining_g_security_04_clean_no_hit_explicitly_unsolved(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """G."""
+    defect = _defect(
+        category="SECURITY",
+        severity="CRITICAL",
+        location="solution.py: resolve_safe_fetch_target return addresses[0]",
+        fix=(
+            "The function validates ALL resolved addresses are public but then returns "
+            "addresses[0], the first address from getaddrinfo, not necessarily the one "
+            "that was validated in a TOCTOU/DNS-rebinding sense."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=SEC_04_TASK,
+        code=SEC_04_CLEAN,
+        shadow_adjudicate=True,
+    )
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    # still blocking -- unsolved by this mechanism, exactly as registered/designed
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_shadow_mining_h_no_judge_prompt_severity_or_schema_change(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """H: this wiring touches only pipeline.py's shadow path."""
+    import hashlib
+
+    from engine.verification.judge import RESPONSE_INSTRUCTION
+    from engine.verification.rubric import DEFECT_KEYS, SEVERITIES
+    from engine.verification.schema import enforce_critic_schema
+
+    assert (
+        hashlib.sha256(RESPONSE_INSTRUCTION.encode()).hexdigest()
+        == "e5dd7f825008a752c19d4dc77fbec65ed74be9dbfc36c29c2bc9691c9924dd4f"
+    )
+    assert SEVERITIES == frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW"})
+    assert DEFECT_KEYS == frozenset({"id", "category", "severity", "location", "fix"})
+    # a mined-shaped defect must not confuse the unmodified schema validator
+    assert enforce_critic_schema({"defects": [_MINED_HIGH], "verdict": "FAIL"}) == []
+
+    # and the ACTUAL verdict is unaffected by shadow mining regardless
+    status, merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH], shadow_adjudicate=True)
+    assert status == "UNVERIFIED"
+    assert "minimal_trigger" not in merged["defects"][0]

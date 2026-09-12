@@ -7,6 +7,7 @@ from engine.runtime.gateway import LLMGateway
 from engine.state.models import VerificationResult
 from engine.verification import admissibility, verdict
 from engine.verification.automated import automated_defects, run_automated_gates
+from engine.verification.evidence_mining import mine_trigger_evidence
 from engine.verification.judge import run_judge_gates
 
 
@@ -61,6 +62,13 @@ def run_verification(
     authoritative verdict is byte-identical to ``shadow_adjudicate=False`` on the
     same inputs -- that equivalence is what the flag exists to preserve, and it
     is pinned by tests/test_shadow_adjudication.py.
+
+    Each shadow record is additionally offered a ``minimal_trigger`` mined by
+    ``evidence_mining.mine_trigger_evidence`` from the defect's own existing
+    free text, on a throwaway copy built solely for that one record -- see
+    ``_with_mined_evidence``. This can change what the *shadow* record
+    concludes; it changes nothing about ``merged["defects"]`` or the
+    authoritative verdict, in shadow mode or otherwise (CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md).
 
     The two flags are mutually exclusive. One annotates the dict the gate reads
     and the other must not; silently ordering them would make it impossible to
@@ -125,10 +133,27 @@ def _shadow_adjudications(merged: dict, task_text: str, code_snapshot: str) -> l
     return [record for record in records if record is not None]
 
 
+def _with_mined_evidence(defect: dict, task_text: str, code_snapshot: str) -> dict:
+    """A shadow-only copy of ``defect``, augmented with any ``minimal_trigger``
+    ``evidence_mining`` can recover from the defect's own existing free text.
+
+    Never mutates ``defect``. The original -- not this copy -- is what
+    ``merged["defects"]`` continues to hold and what the actual verdict path
+    reads; this copy exists only for the one sidecar record built from it.
+    Never overwrites a judge-supplied ``minimal_trigger`` (the control prompt
+    supplies none today, but this stays correct if that ever changes).
+    """
+    if defect.get("minimal_trigger"):
+        return defect
+    mined = mine_trigger_evidence(defect, task_text, code_snapshot)
+    return {**defect, **mined} if mined else defect
+
+
 def _shadow_record(defect: dict, task_text: str, code_snapshot: str) -> dict | None:
     try:
+        shadow_defect = _with_mined_evidence(defect, task_text, code_snapshot)
         return admissibility.adjudication_record(
-            defect, defect.get("lens") or "automated", task_text, code_snapshot
+            shadow_defect, defect.get("lens") or "automated", task_text, code_snapshot
         )
     except Exception:  # noqa: BLE001 -- shadow bookkeeping never breaks a verdict
         return None
