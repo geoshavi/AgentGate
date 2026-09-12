@@ -230,6 +230,182 @@ CRITICAL/HIGH (`rubric.py`, `schema.py`, `judge.py` `RESPONSE_INSTRUCTION`).
   return the engine to a neutral pre-experiment configuration; it returns it to a second
   unvalidated one. That is a statement about the code, not a measurement.
 
+## Registration B — Phase 0 Control Baseline (dataset v6, CONTROL ONLY — NO EFFICACY CLAIM)
+
+Registered in `docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B.md` (§8, phase 0) with
+`docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B_ADDENDUM_01.md` (executable SHA and
+frozen pre-run database baseline). Both were committed **before** any run in this section
+existed.
+
+**Executable SHA `44ef7a4785d58b4da7fee6fa6d5680f6c93a62dd`**, stamped on all four runs.
+The measured-path base is `4158408` (Registration B §1); the two commits are byte-identical
+across every measured-path file and every §9 frozen variable (Addendum 01 §2). Re-verified
+at `44ef7a4` for this entry: control `judge.py` blob
+`2a2a17f16611d4586d122d6e65710f9bd520910f`, control `RESPONSE_INSTRUCTION` sha256
+`e5dd7f825008a752c19d4dc77fbec65ed74be9dbfc36c29c2bc9691c9924dd4f` (1439 chars) — both
+match §1 exactly. Judge model `claude-sonnet-5`, judge `max_tokens` 1600, adjudicator
+version `adjudication/1`. All four runs executed `engine bench --shadow-adjudicate`; shadow
+mode is held constant and cannot change a verdict (Addendum 01 §2.1).
+
+| run | date | commit sha | dataset_version | accuracy | false_pass | false_unverified | cost | what changed |
+|-----|------------|------------|------------------|----------------|-------------|-------------------|---------|------------------------------------------|
+| 58  | 2026-09-11 | 44ef7a4    | v6               | 39/40 (97.5%)  | 0           | 1                 | $0.7652780 | **Phase 0 control arm, run 1/4** — control prompt unchanged; first live run of this configuration cluster and first live shadow-adjudication persistence |
+| 59  | 2026-09-11 | 44ef7a4    | v6               | 37/40 (92.5%)  | 0           | 3                 | $0.7313860 | Phase 0 control arm, run 2/4 |
+| 60  | 2026-09-11 | 44ef7a4    | v6               | 38/40 (95.0%)  | 0           | 2                 | $0.7844560 | Phase 0 control arm, run 3/4 |
+| 61  | 2026-09-12 | 44ef7a4    | v6               | 38/40 (95.0%)  | 0           | 2                 | $0.7415860 | Phase 0 control arm, run 4/4 — completes N=4 |
+
+Dates are the stored `eval_runs.created_at` values; the four runs are one contiguous batch
+(23:26, 23:38, 23:49, 00:01), crossing midnight between runs 60 and 61.
+
+- **THIS IS A CONTROL BASELINE ONLY. IT PROVES NO INTERVENTION EFFICACY.** All four runs
+  executed the **unchanged control prompt**. The Registration B intervention did not exist
+  when these runs executed and is still not implemented. Nothing in this section may be
+  cited as evidence that any prompt change helps, hurts, or does anything at all. Its sole
+  purpose is to supply the concurrently measured control figures that Registration B §1.2
+  and §16.6 require before an intervention run can be interpreted — the configuration
+  cluster at this SHA previously held **zero** completed runs, so no row elsewhere in this
+  file was a valid baseline for it.
+- **All four runs are VALID.** Integrity gate passed on every check, read from a scratchpad
+  copy of `.engine/state.db`: **0** `eval_case_results.error` rows in each run (40/40 cases
+  scored), **120/120** `eval_case_lens_results.call_status = 'ok'` in each run, **120/120**
+  `eval_case_automated_gates.passed = 1` in each run, and every `agent_execution_metrics`
+  row `status = 'ok'` (125/124/127/123 judge calls). Each run's `eval_runs.git_commit_sha`
+  records `44ef7a4785d58b4da7fee6fa6d5680f6c93a62dd` exactly.
+- **Aggregate (secondary metric, never decisive — Registration B §11).** Correct verdicts
+  39, 37, 38, 38 → **mean 38.0/40 = 95.0%**, range 37-39, **SD 0.816** at N=4. The SD is
+  consistent with the carried-over pooled σ ≈ 0.92 and is itself an N=4 estimate at a new
+  configuration, not a replacement for it. **`false_pass` total = 0** across all four runs.
+  **`false_unverified` total = 8** (1 + 3 + 2 + 2).
+- **Per-case stability partition (N=4): 37 always-pass / 1 always-fail / 2 borderline.**
+  Always-fail: `security-04-clean`. Borderline: `edge_case-02-clean` (3/4 OK) and
+  `security-02-clean` (1/4 OK). All 8 `false_unverified` are accounted for by these three
+  clean cases; no broken case ever failed, and no case failed in any other way. Accuracy
+  here is not 40 independent trials — it is 37 deterministic cases plus three unstable ones.
+- **Target-case control rates (Registration B §7).** These are the figures an intervention
+  arm would be compared against.
+  - `edge_case-02-clean` — **3/4 OK** (OK, UNVERIFIED, OK, OK). Numerically equal to the
+    3/4 measured in the grounded-severity baseline arm (runs 50-53) at a different SHA;
+    recorded as agreement between two independent N=4 clusters, not pooled with it.
+  - `security-04-clean` — **0/4 OK** (UNVERIFIED in all four runs). Blocking
+    (CRITICAL+HIGH) defect count on the paired broken case `security-04-broken` was
+    **4/5/4/4** — the redundant blocking mass §7 describes.
+  - `quality-04-broken` — **UNVERIFIED 4/4, with exactly 1 blocking defect in every run.**
+    This is the primary drift sentinel and the tightest margin in the set: §12.4 makes a
+    fall from ≥1 to 0 an immediate REJECT, and the measured control margin is exactly one
+    defect.
+  - `security-03-clean` (**negative control**) — **OK 4/4.** Its only defect in any run was
+    a single `code-quality`/LOW finding (runs 58, 60, 61; none in run 59), never blocking.
+- **Safety-control results (all four runs).** `edge_case-02-broken` blocked 4/4 (2/2/3/2
+  blockers); `security-03-broken` blocked 4/4 with **exactly 1 blocker each run**;
+  `security-04-broken` blocked 4/4 (4/5/4/4 blockers); `quality-04-broken` blocked 4/4 with
+  **exactly 1 blocker each run**. **All 20 broken cases were correctly blocked in all four
+  runs, and none reached zero blocking defects in any run.**
+- **Sole-blocker census (S5 control reference, §12.5).** **8 of the 20 broken cases rest on
+  exactly one blocking defect in at least one of the four runs**: `correctness-01-broken`,
+  `correctness-02-broken`, `correctness-04-broken`, `correctness-05-broken`,
+  `edge_case-03-broken`, `edge_case-05-broken`, `quality-04-broken`, `security-03-broken`.
+  Two of those — `quality-04-broken` and `security-03-broken` — rest on a single blocker in
+  **every** run. This is the measured blast radius any demotion mechanism would aim at. It
+  is narrower than the 12-of-20 figure measured across runs 50-55, which was taken at a
+  different configuration; the two are not pooled and neither supersedes the other.
+- **Severity distribution reference (S3 control reference, §12.3).** Total defects per run
+  80 / 79 / 98 / 79 (mean 84.0). Pooled across runs 58-61 (336 defects): by severity
+  **CRITICAL 48, HIGH 150, MEDIUM 69, LOW 69** — 198 blocking (58.9%); by lens
+  **correctness 146, security 104, code-quality 86**. Per-run, per-lens:
+
+  | run | correctness C/H/M/L | security C/H/M/L | code-quality C/H/M/L | total |
+  |-----|---------------------|------------------|----------------------|-------|
+  | 58  | 7 / 16 / 8 / 4      | 3 / 10 / 4 / 4   | 1 / 9 / 3 / 11       | 80    |
+  | 59  | 7 / 19 / 9 / 3      | 5 / 14 / 4 / 1   | 0 / 7 / 2 / 8        | 79    |
+  | 60  | 7 / 17 / 9 / 6      | 4 / 18 / 6 / 5   | 2 / 8 / 5 / 11       | 98    |
+  | 61  | 9 / 14 / 9 / 2      | 3 / 13 / 7 / 3   | 0 / 5 / 3 / 11       | 79    |
+
+  This is the control-arm reference against which §12.3 and §12.6 would be evaluated. It is
+  a distribution, not a result.
+- **Schema failures: 6 total — 2, 2, 1, 1 per run.** **The §12.2 abort threshold is 6 _per
+  run_, not per phase**; the maximum in any single run here is 2, so the threshold did not
+  fire and no run came close to it. The numerical coincidence between the phase total and
+  the threshold value is a coincidence and must not be read as a near-miss. Per the standard
+  rule, schema failures are recorded, not disqualifying. All six are the **same class** —
+  `verdict: is 'OK' but expected 'FAIL' given the defects`, the pre-existing
+  verdict/severity consistency check, **not** a novel evidence-field rejection — and all six
+  land on just two clean security cases: `security-04-clean` (run 58 × correctness, run 58 ×
+  security, run 59 × security) and `security-02-clean` (run 59 × correctness, run 60 ×
+  security, run 61 × correctness). This is the pre-intervention attribution baseline §12.2
+  requires; a future failure of a different class is therefore attributable.
+- **Shadow adjudication — persistence confirmed live, outcome uniformly inert.** **336
+  sidecar rows** in `eval_case_defect_adjudications` (80 / 79 / 98 / 79), exactly one per
+  defect, all `adjudicator_version = 'adjudication/1'`. The table held **0 rows** before this
+  phase (Addendum 01 §3.1), so this is the first live evidence the shadow path persists at
+  all. Distribution:
+  - **198 rows** — every CRITICAL/HIGH defect (48 CRITICAL + 150 HIGH) — carry
+    `rule = 'fail-closed-unresolved'`, `admissible_to_block = 1`, reason "no deterministic
+    contradiction established". **198/198 blocking defects fail-closed-unresolved.**
+  - **138 rows** — every MEDIUM/LOW defect — carry `rule = 'not-applicable'`,
+    `admissible_to_block = NULL`.
+  - **0 suppressions.** No row in any run carries `admissible_to_block = 0`. The shadow
+    layer demoted nothing, and its 198 blocking rows reconcile exactly with the 198
+    CRITICAL/HIGH rows in `eval_case_defects` for these runs.
+  - All five adjudication premises resolved `UNRESOLVED` in all 336 rows —
+    `violation_present_in_submitted_code`, `trigger_in_contract`,
+    `premise_excluded_by_guarantee` and `premise_depends_on_runtime_behaviour` each via rule
+    `no-evidence`; `self_contradiction` via rule `retraction`.
+- **Evidence availability = 0%, exactly as Registration B §8 predicted.** All five evidence
+  fields (`grounded_in_clause`, `grounding_route`, `minimal_trigger`, `runtime_probe`,
+  `excluded_by_clause`) are **null in every one of the 336 rows**, and 0 rows carry any probe
+  data. The control arm therefore measures **E1 = 0%**, **E2 = 0% (0 of 198 blocking defects
+  resolved)**, **E3 = all routes NULL**. This is the floor the experiment exists to move, and
+  it is now measured rather than assumed. **The 40% futility floor applies to the
+  _intervention_ arm (§11), not to control** — a 0% control E2 is the expected and registered
+  starting condition, not a futility trigger.
+- **No STOP rule fired.** §12.1 `false_pass` = 0 in all four runs. §12.2 max 2 schema
+  failures per run against a threshold of 6. §12.4 `quality-04-broken` held ≥1 blocker in
+  every run. §12.5 no broken case lost its blocking mass. §12.6 no suppression. §12.7 spend
+  $3.022706 against a $30.00 cumulative stop-loss. §12.3, §12.4's drift clause and §12.6 are
+  *comparative* rules requiring an intervention arm and are **not evaluable from control
+  alone** — this section records their control-side reference values only.
+- **Cost.** $0.7652780 + $0.7313860 + $0.7844560 + $0.7415860 = **$3.022706** for Phase 0,
+  against a §15 estimate of ~$2.92 (an estimate, not a ceiling) and the $30.00 cumulative
+  hard stop-loss. Cumulative Registration B spend to date: **$3.022706**. Mean latency
+  15.5-16.5 s per case.
+- **Provenance of these runs.** Executed from a **detached worktree at exactly `44ef7a4`**
+  (`C:/Users/PC/Desktop/engine-phase0-44ef7a4`, detached HEAD, clean tree). Executed code and
+  stamped SHA both verified as `44ef7a4`: `git diff 44ef7a4 -- src/ tests/` in that worktree
+  returns empty, and `eval_runs.git_commit_sha` records the same SHA for all four runs — so
+  the `get_git_commit_sha()` HEAD-not-working-tree hazard is closed by construction rather
+  than by assumption. `PYTHONPATH` and `ENGINE_DB_PATH` pins were used so the worktree
+  executed its own source while appending to the single production database (the worktree
+  holds no `state.db` of its own). **The main repository was not touched** — no checkout, no
+  branch change, tree clean at `2ddf31b` throughout. An initial credentialless launch
+  preceded these runs and **produced no run, no API call, no database write and no spend; it
+  is not an experiment result** and is recorded here only so the attempt is not later
+  mistaken for a missing or void run.
+- **Post-Phase-0 database state.** `.engine/state.db` sha256
+  `102f5bb4949523f9b5378eed79ce262d1567abd90c5ed72a83a764ba81ee77de`, size **4780032**,
+  `PRAGMA integrity_check` = `ok`, **no `-wal`, no `-shm`**. `eval_runs` = **61** rows (ids
+  contiguous through 61), `eval_case_defect_adjudications` = **336** rows. The change from
+  Addendum 01 §3's frozen pre-run baseline
+  (`665773a9d626d04ac7eb4792ebd4af0a0d5b2617461a877f08501adf8a07fba9`, size 4198400, 57
+  `eval_runs`, 0 adjudications) is **fully explained by the four recorded `engine bench`
+  runs** and is purely additive; no prior row was altered. **This hash supersedes the
+  Addendum 01 figure as the reference pre-run state for the next run under Registration B** —
+  any future divergence not explained by a recorded run is an integrity incident.
+- **What Phase 0 establishes, and what it does not.** It establishes: a measured control
+  baseline at a configuration cluster that previously had none; that shadow adjudication
+  persists correctly under live conditions; and that the evidence-availability floor is
+  genuinely 0%, not merely assumed to be. It establishes **nothing** about the proposed
+  prompt intervention, which has not been written. Per Registration B §14 these figures are
+  now frozen as the control arm and may not be re-sliced, extended (there is no "run a few
+  more" option under this registration), or reinterpreted once intervention data exists.
+- **Next step under Registration B §16.** §16.6 — Phase 0's measured control figures
+  recorded in BASELINE.md before any intervention run — is satisfied by this entry. Still
+  outstanding before Phase 1 may run: **§16.4**, the intervention implemented in its **own
+  separate commit** touching only `RESPONSE_INSTRUCTION` in `judge.py` (a measured-path file,
+  requiring its own explicit approval, and starting a new configuration cluster); and
+  **§16.5**, the intervention SHA and its new `RESPONSE_INSTRUCTION` sha256 recorded in
+  **Addendum 02**. Phase 1 then requires its own per-turn approval and a passing `git-safety`
+  pre-run gate. Analysis of Phase 0 authorises none of this.
+
 ## Notes
 
 - Runs 6-9 were executed on an identical commit (942f509) and show a spread of 29-32/40 correct verdicts (72.5%-80.0%), i.e. a ±3/40 noise floor. Single-run deltas smaller than this are not interpretable as real changes.
