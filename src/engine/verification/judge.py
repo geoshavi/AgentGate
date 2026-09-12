@@ -42,32 +42,6 @@ RESPONSE_INSTRUCTION = (
     "category must be exactly one of CORRECTNESS, SECURITY, or CODE-QUALITY — use the "
     "closest match, never invent a more specific label. "
     "Return {\"defects\": [], \"verdict\": \"OK\"} if you find nothing to flag."
-    # Registration B optional evidence capture, appended verbatim per
-    # docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B.md section 3. Three
-    # fields, all optional forever: a defect carrying none of them is
-    # unadjudicated, not malformed, and keeps its blocking authority in full.
-    # This block records what the judge observed; it decides nothing --
-    # trigger_in_contract, premise_excluded_by_guarantee,
-    # premise_depends_on_runtime_behaviour, violation_present_in_submitted_code,
-    # self_contradiction and admissibility stay the independent adjudicator's
-    # facts (section 4). Placed before the grounded-severity ceiling so that
-    # block remains the final instruction, per section 5.
-    "\n"
-    "You may optionally attach up to three evidence fields to any defect, to "
-    "record what you observed rather than to decide anything: "
-    "grounded_in_clause (a span of the task text above, copied verbatim, that "
-    "the finding rests on), minimal_trigger (the smallest concrete argument "
-    "demonstrating the defect, given as \"name=<python literal>\" for one of "
-    "the code's own declared parameters — never \"return=...\"), and "
-    "grounding_route (exactly one of explicit_requirement, permitted_input, "
-    "stated_purpose, or none/unclear). All three are optional, forever: omit "
-    "any or all of them, and a defect carrying none of them is a complete, "
-    "valid finding that keeps its full severity. These fields are not a "
-    "decision — do not use them to decide whether a finding is in scope, "
-    "whether it may block, whether it is admissible, or whether to report it. "
-    "Never raise a defect's severity because these fields are present, and "
-    "never lower it because they are absent or hard to produce; severity is "
-    "assigned from impact alone, exactly as below."
     # Grounded-severity ceiling, appended verbatim per
     # docs/benchmark/GROUNDED_SEVERITY_EXPERIMENT_REGISTRATION.md section 3. It constrains
     # what severity a finding may claim; it never suppresses one. Reporting is explicitly

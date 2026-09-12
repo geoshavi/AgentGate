@@ -1457,28 +1457,6 @@ _REGISTERED_SEVERITY_BLOCK = (
     "you can ground."
 )
 
-# Registration B's optional evidence-capture block
-# (docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B.md), inserted before the
-# grounded-severity ceiling above per section 5, so the ceiling stays the final
-# instruction unchanged.
-_REGISTERED_EVIDENCE_BLOCK = (
-    "You may optionally attach up to three evidence fields to any defect, to "
-    "record what you observed rather than to decide anything: "
-    "grounded_in_clause (a span of the task text above, copied verbatim, that "
-    "the finding rests on), minimal_trigger (the smallest concrete argument "
-    "demonstrating the defect, given as \"name=<python literal>\" for one of "
-    "the code's own declared parameters — never \"return=...\"), and "
-    "grounding_route (exactly one of explicit_requirement, permitted_input, "
-    "stated_purpose, or none/unclear). All three are optional, forever: omit "
-    "any or all of them, and a defect carrying none of them is a complete, "
-    "valid finding that keeps its full severity. These fields are not a "
-    "decision — do not use them to decide whether a finding is in scope, "
-    "whether it may block, whether it is admissible, or whether to report it. "
-    "Never raise a defect's severity because these fields are present, and "
-    "never lower it because they are absent or hard to produce; severity is "
-    "assigned from impact alone, exactly as below."
-)
-
 # The instruction exactly as it stood at the pre-intervention commit (16309b5).
 _PRE_INTERVENTION_RESPONSE_INSTRUCTION = (
     "\n\nRespond with ONLY a JSON object, no prose before or after, no markdown fences:\n"
@@ -1504,88 +1482,11 @@ def test_registered_block_sits_at_the_registered_placement() -> None:
 
 
 def test_the_intervention_is_purely_additive() -> None:
-    """Everything that existed before the grounded-severity intervention survives it
-    byte-for-byte -- including the 'FAIL iff CRITICAL or HIGH' verdict rule and the
-    closed category enum -- and Registration B's evidence block is inserted between
-    it and the ceiling, never after: the ceiling must remain the final instruction."""
+    """Everything that existed before the intervention survives it byte-for-byte --
+    including the 'FAIL iff CRITICAL or HIGH' verdict rule and the closed category enum."""
     assert RESPONSE_INSTRUCTION.startswith(_PRE_INTERVENTION_RESPONSE_INSTRUCTION)
     added = RESPONSE_INSTRUCTION[len(_PRE_INTERVENTION_RESPONSE_INSTRUCTION) :]
-    assert added == "\n" + _REGISTERED_EVIDENCE_BLOCK + "\n" + _REGISTERED_SEVERITY_BLOCK, (
-        "only the registered evidence block and the ceiling were added, in that order"
-    )
-
-
-def test_evidence_block_sits_before_the_grounded_severity_ceiling() -> None:
-    """Registration B section 5: the evidence block is placed BEFORE the ceiling, and
-    the ceiling remains the final relevant instruction so its semantics are unchanged."""
-    idx_evidence = RESPONSE_INSTRUCTION.index(_REGISTERED_EVIDENCE_BLOCK)
-    idx_ceiling = RESPONSE_INSTRUCTION.index(_REGISTERED_SEVERITY_BLOCK)
-    assert idx_evidence < idx_ceiling
-    assert RESPONSE_INSTRUCTION.endswith(_REGISTERED_SEVERITY_BLOCK)
-
-
-def test_evidence_block_names_only_the_three_registered_fields() -> None:
-    """Section 3.3: excluded_by_clause and runtime_probe are withheld from the prompt
-    -- both can strip a finding's blocking authority through a premise the judge
-    itself would author, which this registration explicitly forbids requesting."""
-    for field in ("grounded_in_clause", "minimal_trigger", "grounding_route"):
-        assert field in _REGISTERED_EVIDENCE_BLOCK
-    assert "excluded_by_clause" not in RESPONSE_INSTRUCTION
-    assert "runtime_probe" not in RESPONSE_INSTRUCTION
-
-
-def test_evidence_block_emits_only_the_canonical_routes() -> None:
-    """Section 3.2: exactly these four, byte for byte. An out-of-enum route is
-    silently discarded by extract_evidence with no record of the raw string, so
-    'omitted' and 'unrecognised' become indistinguishable -- the prompt must never
-    invite a value outside the canonical set."""
-    assert (
-        "explicit_requirement, permitted_input, stated_purpose, or none/unclear"
-        in _REGISTERED_EVIDENCE_BLOCK
-    )
-    assert "runtime_premise" not in RESPONSE_INSTRUCTION
-    assert "none_or_unclear" not in RESPONSE_INSTRUCTION
-
-
-def test_evidence_block_scopes_minimal_trigger_away_from_return() -> None:
-    """Section 3.3: minimal_trigger must never bind `return=...`, which would route
-    into the adjudicator-owned violation_present_in_submitted_code fact via
-    _adjudicate_return rather than the judge-safe _adjudicate_trigger path."""
-    assert '"return=..."' in _REGISTERED_EVIDENCE_BLOCK
-    assert "never \"return=...\"" in _REGISTERED_EVIDENCE_BLOCK
-
-
-def test_evidence_block_asks_nothing_the_judge_may_not_decide() -> None:
-    """Section 4: these are adjudicator-owned facts, and this registration requires
-    the prompt never name them as something the judge decides."""
-    forbidden = (
-        "trigger_in_contract",
-        "premise_excluded_by_guarantee",
-        "premise_depends_on_runtime_behaviour",
-        "violation_present_in_submitted_code",
-        "self_contradiction",
-        "admissible_to_block",
-    )
-    for term in forbidden:
-        assert term not in RESPONSE_INSTRUCTION
-
-
-def test_evidence_block_preserves_severity_independence() -> None:
-    """Section 4: severity must never move because evidence is present, absent, easy,
-    or hard to produce."""
-    assert "Never raise a defect's severity because these fields are present" in (
-        _REGISTERED_EVIDENCE_BLOCK
-    )
-    assert "never lower it because they are absent or hard to produce" in (
-        _REGISTERED_EVIDENCE_BLOCK
-    )
-
-
-def test_evidence_block_declares_all_three_fields_optional_forever() -> None:
-    assert "All three are optional, forever" in _REGISTERED_EVIDENCE_BLOCK
-    assert "a defect carrying none of them is a complete, valid finding" in (
-        _REGISTERED_EVIDENCE_BLOCK
-    )
+    assert added == "\n" + _REGISTERED_SEVERITY_BLOCK, "only the registered block was added"
 
 
 def test_registered_block_names_no_dataset_case_or_task() -> None:
