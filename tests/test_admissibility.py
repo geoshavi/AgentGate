@@ -323,6 +323,109 @@ def test_9_quality_04_broken_shape_is_unchanged_by_the_gate() -> None:
     assert all(d["admissible_to_block"] is None for d in annotated["defects"])
 
 
+# Real dataset fixtures for the two razor-margin safety controls: each rests
+# on exactly one blocking defect in every Phase 0 control run (BASELINE.md,
+# Registration B's sole-blocker census). Verbatim from dataset.py, not the
+# generic "task"/"code" placeholders test_9 uses above.
+QUALITY_04_TASK = (
+    "Implement classify_order(total, is_member, has_coupon, in_stock) -> str. Return "
+    "'rejected' when not in_stock. Otherwise an order is high-value when total is "
+    "strictly greater than 100, and the tier is: members with a coupon get "
+    "'vip_discount' when high-value and 'member_coupon_discount' otherwise; members "
+    "without a coupon get 'member_discount' when high-value and 'member_standard' "
+    "otherwise; non-members get 'coupon_discount' with a coupon and 'standard' "
+    "without. Define the high-value threshold once as a single named constant."
+)
+QUALITY_04_BROKEN = (
+    "def classify_order(total: float, is_member: bool, has_coupon: bool, in_stock: bool) -> str:\n"
+    "    if in_stock:\n"
+    "        if is_member:\n"
+    "            if has_coupon:\n"
+    "                if total > 100:\n"
+    '                    return "vip_discount"\n'
+    "                else:\n"
+    '                    return "member_coupon_discount"\n'
+    "            else:\n"
+    "                if total > 100:\n"
+    '                    return "member_discount"\n'
+    "                else:\n"
+    '                    return "member_standard"\n'
+    "        else:\n"
+    "            if has_coupon:\n"
+    '                return "coupon_discount"\n'
+    "            else:\n"
+    '                return "standard"\n'
+    "    else:\n"
+    '        return "rejected"\n'
+)
+
+
+def test_9b_quality_04_broken_real_phase0_high_shape_stays_blocking() -> None:
+    """Closes the gap the AgentGate forensic-analysis turn flagged: test_9 above only
+    proves the gate leaves an already-non-blocking (MEDIUM/MEDIUM/LOW) shape alone. This
+    test uses the actual Phase 0 control-arm shape instead -- a HIGH code-quality finding
+    on the missing named constant, with zero evidence fields, exactly as
+    eval_case_defects records it in runs 58-61 (BASELINE.md) and as the control prompt
+    (which requests no evidence) always produces. It goes through the real decision path
+    (admissibility.decide() and admissibility.annotate() + verdict.gate()), not the
+    miner -- tests/test_evidence_mining.py separately proves the miner mines nothing for
+    this exact shape; this test is the independent guarantee on the downstream decision
+    path a real run actually exercises."""
+    defect = _defect(
+        id="C1",
+        category="CODE-QUALITY",
+        severity="HIGH",
+        location="solution.py: total > 100 (used twice)",
+        fix=(
+            "Define a module-level constant, e.g. HIGH_VALUE_THRESHOLD = 100, and replace "
+            "both literal comparisons 'total > 100' with 'total > HIGH_VALUE_THRESHOLD' as "
+            "explicitly requested by the task."
+        ),
+    )
+    assert "minimal_trigger" not in defect
+    assert "excluded_by_clause" not in defect
+    assert "grounding_route" not in defect
+
+    decision = _decide(defect, QUALITY_04_TASK, QUALITY_04_BROKEN)
+
+    assert decision.admissible is True
+    assert decision.rule == "fail-closed-unresolved"
+
+    merged = {"defects": [defect], "verdict": "FAIL"}
+    annotated = admissibility.annotate(merged, QUALITY_04_TASK, QUALITY_04_BROKEN)
+
+    assert annotated["defects"][0]["admissible_to_block"] is True
+    assert verdict.gate(annotated, True, []) == "UNVERIFIED"
+
+
+def test_6c_security_03_broken_sole_high_with_no_evidence_stays_blocking() -> None:
+    """Mirrors test_9b's rigor for the other razor-margin case: real control-prompt
+    shape (no evidence fields at all), run through the actual decision path rather than
+    a hand-supplied grounding_route as test_6/test_6b do."""
+    defect = _defect(
+        category="SECURITY",
+        severity="HIGH",
+        location="solution.py: generate_reset_token",
+        fix=(
+            "random.choice over a fixed alphabet is not cryptographically secure; use "
+            "secrets.token_hex instead."
+        ),
+    )
+    assert "minimal_trigger" not in defect
+    assert "grounding_route" not in defect
+
+    decision = _decide(defect, SEC_03_TASK, SEC_03_BROKEN)
+
+    assert decision.admissible is True
+    assert decision.rule == "fail-closed-unresolved"
+
+    merged = {"defects": [defect], "verdict": "FAIL"}
+    annotated = admissibility.annotate(merged, SEC_03_TASK, SEC_03_BROKEN)
+
+    assert annotated["defects"][0]["admissible_to_block"] is True
+    assert verdict.gate(annotated, True, []) == "UNVERIFIED"
+
+
 # ==========================================================================
 # SEVERITY IS NEVER TOUCHED
 # ==========================================================================
