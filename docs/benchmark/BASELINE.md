@@ -406,6 +406,105 @@ Dates are the stored `eval_runs.created_at` values; the four runs are one contig
   **Addendum 02**. Phase 1 then requires its own per-turn approval and a passing `git-safety`
   pre-run gate. Analysis of Phase 0 authorises none of this.
 
+## Registration B — Phase 1 L0 (dataset v6, REJECTED AT L0)
+
+Registered in `docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B.md` §8 (Phase 1),
+`docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B_ADDENDUM_02.md` (intervention
+provenance), both committed **before** this run existed. Intervention commit
+`cff6196df64fa7b7ece003e729b7eaac484f0d50` (parent `d7d3c4aeb697acdb3d3d5d1cdb329c3b58b81099`,
+recorded at `90bef072d62e2f95596a0ce6b50c2a0a12ee2482` after the docs-only Addendum 02 commit),
+intervention `RESPONSE_INSTRUCTION` sha256
+`46798d4a1ec790360c78e3af940c4a3ed8cc92f340f7fc98af3e80e8dc4cb1af` (2452 chars, control was
+1439). **Executed exactly once, as registered (N=1, L0 smoke, safety gate only).**
+
+| run | date | commit sha | dataset_version | accuracy | false_pass | false_unverified | cost | what changed |
+|-----|------------|------------|------------------|----------------|-------------|-------------------|---------|------------------------------------------|
+| 62  | 2026-09-12 | 90bef07    | v6               | 37/40 (92.5%)  | **1**       | 2                 | $0.782874 | **Phase 1 L0 smoke, N=1** — Registration B optional evidence-capture intervention (`grounded_in_clause`, `minimal_trigger`, `grounding_route`) added to `RESPONSE_INSTRUCTION`, before the grounded-severity ceiling |
+
+- **Run 62 is VALID, not VOID.** Verified from a scratchpad copy of `.engine/state.db`:
+  **0** `eval_case_results.error` rows, 40/40 cases scored, `eval_runs.git_commit_sha` records
+  `90bef072d62e2f95596a0ce6b50c2a0a12ee2482` exactly, matching the tree the run executed
+  against. `PRAGMA integrity_check = ok` before and after the run.
+- **DECISION: REJECT / CLOSED, under three independent absolute rules, each sufficient on
+  its own:**
+  - **§12.1** — `false_pass >= 1`, zero tolerance, no per-case exception.
+  - **§12.4** — `quality-04-broken`'s blocking (CRITICAL/HIGH) defect count fell from
+    exactly 1 in **every one of Phase 0's four control runs** to **0** in this run.
+  - **§12.5** — sole-blocker loss: `quality-04-broken` rested on a single blocking defect
+    in every control run and lost that defect's blocking severity here.
+  Per the registration, this decision is evaluated **before** any efficacy metric and
+  **cannot be reversed by the attribution analysis that follows** — that asymmetry was
+  accepted in advance, in writing, precisely so it could not be argued away once a rule
+  fired. **Registration B is REJECTED and CLOSED. No further live run under this
+  registration is authorized; none has been run.**
+- **False-pass case and exact mechanism: `quality-04-broken`.** `expected_verdict =
+  'UNVERIFIED'`, `actual_verdict = 'OK'`. Its complete record this run: `correctness/MEDIUM`,
+  `security/LOW` (self-labelled CODE-QUALITY), `code-quality/MEDIUM`, `code-quality/LOW` —
+  **zero CRITICAL or HIGH defects from any lens.** The Phase 0 control baseline recorded
+  exactly one blocking defect (HIGH, from the `correctness` lens) on this case in **all
+  four** control runs (58-61). In this run that same finding is present but reported as
+  `correctness/MEDIUM` — **the identical HIGH -> MEDIUM demotion mechanism this
+  registration was designed to guard against**, and the same signature already seen on
+  this case in run 57 (structured grounding, `9d20c33`, zero CRITICAL/HIGH from any lens)
+  and run 52 (grounded-severity baseline arm). `quality-04-broken` false-passing is now a
+  recorded background risk across **three independent configurations** (52, 57, 62).
+- **The false pass came from judge severity movement, not from shadow admissibility.**
+  `verdict.gate()` reads `d["severity"]` directly and is unmodified; nothing in
+  `admissibility.py` was invoked authoritatively (`--shadow-adjudicate` only,
+  `adjudicate=True` was never set). Confirmed from the sidecar table:
+  `eval_case_defect_adjudications.admissible_to_block` is **`False` in zero of 77 rows**
+  this run — the shadow layer suppressed nothing. The defect that sank this case was never
+  blocking in the first place (`MEDIUM`), so the admissibility layer never evaluated it
+  (`rule = 'not-applicable'` for every non-blocking row). Behavioral admissibility was
+  never enabled at any point in this registration.
+- **Evidence availability, measured but moot.** **E1 = 59/77 = 76.6%** (at least one of the
+  three optional fields present) — a sharp rise from Phase 0's measured 0%. Field coverage:
+  `grounded_in_clause` 51/77, `minimal_trigger` 40/77, `grounding_route` 59/77. **E2
+  (blocking defects resolved to a non-`fail-closed-unresolved` rule) = 1/48 = 2.1%** —
+  **below the registered 40% futility floor** (§11). Shadow rule distribution across all 77
+  rows: `fail-closed-unresolved` 47, `not-applicable` 29, `stated-purpose-protected` 1;
+  `admissible_to_block` True 48 / False 0 / not-applicable 29. Per §12's ordering, the E2
+  futility result is recorded for completeness only — the run was already REJECTed on
+  safety grounds before E2 was relevant, and this figure supports no efficacy or futility
+  conclusion by itself at N=1.
+- **Schema failures: 1** (`correctness` lens, `verdict: is 'OK' but expected 'FAIL' given
+  the defects`) — the same pre-existing verdict/severity consistency class recorded in
+  Phase 0 (6 total there), not a novel evidence-field rejection. Far below the abort
+  threshold of 6.
+- **Target-case outcomes — descriptive only, decide nothing, and are not an efficacy
+  claim.** `edge_case-02-clean` **remained UNVERIFIED** (1 HIGH blocker). `security-04-clean`
+  **remained UNVERIFIED** (2 blocking defects of 5). Neither target case improved, was
+  fixed, or changed status relative to its Phase 0 majority outcome. At N=1 with no
+  concurrent control arm in this run, no efficacy or improvement claim may be made or cited
+  from run 62, per Registration B §14.
+- **Safety-control cases other than `quality-04-broken` held.** `edge_case-02-broken`
+  blocked (3 blocking defects: 2 CRITICAL, 1 HIGH). `security-03-broken` blocked **with its
+  sole control-arm blocker intact** (1 HIGH — the same case Phase 0 identified as resting on
+  a single blocker in every control run). `security-04-broken` blocked (3 blocking defects:
+  2 CRITICAL, 1 HIGH — down from control's 4/5/4/4 but still safely above zero). No broken
+  case other than `quality-04-broken` lost its blocking authority.
+- **No Stage 1 is authorized, and none was run.** Stage 1 (N=4/arm) and Stage 2 (N=8/arm)
+  were never executed. The experiment terminated at L0 on a safety guardrail; ACCEPT
+  criteria A1-A7 were never evaluated and no ACCEPT, INCONCLUSIVE, or futility verdict may
+  be cited — the recorded outcome is REJECT, full stop.
+- **Cost: $0.782874**, 584,078 ms wall time (~9.7 min), $0.019572 mean per case. Cumulative
+  Registration B spend to date: Phase 0 ($3.022706) + this run = **$3.805580**, against the
+  $30.00 cumulative stop-loss (not approached).
+- **Post-run database state.** sha256
+  `587ecb1f325ed0ed9a0917f7d932d6c95c8c01ab145ffe444e00a1c6ff0987ec`, size **4927488**,
+  `PRAGMA integrity_check = ok`, no `-wal`/`-shm`. `eval_runs` = **62** rows (61 -> 62,
+  contiguous), `eval_case_defect_adjudications` = **413** rows (336 -> 413, +77, exactly
+  this run's defect count — purely additive, no prior row altered). Production DB was not
+  otherwise touched.
+- **Configuration note for whoever reads this next.** Unlike the structured-grounding
+  rollback (which landed on an unvalidated ceiling), reverting the Registration B
+  intervention restores `RESPONSE_INSTRUCTION` to the exact control text already measured
+  across Phase 0's four valid runs (58-61) — a **previously validated** configuration, not
+  an unknown one. **The next code action under this registration, if separately
+  authorized, is that revert** — restoring the control `RESPONSE_INSTRUCTION` in
+  `src/engine/verification/judge.py` — while preserving every historical run record,
+  addendum, and this entry unchanged. That action has not been taken in this turn.
+
 ## Notes
 
 - Runs 6-9 were executed on an identical commit (942f509) and show a spread of 29-32/40 correct verdicts (72.5%-80.0%), i.e. a ±3/40 noise floor. Single-run deltas smaller than this are not interpretable as real changes.
