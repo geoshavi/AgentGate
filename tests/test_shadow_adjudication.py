@@ -822,3 +822,180 @@ def test_shadow_mining_h_no_judge_prompt_severity_or_schema_change(
     status, merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH], shadow_adjudicate=True)
     assert status == "UNVERIFIED"
     assert "minimal_trigger" not in merged["defects"][0]
+
+
+# ==========================================================================
+# Route B (declared-return-type, mine_return_value_evidence) wired alongside
+# Route A, per COMBINED_CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md.
+# Route A's own tests above (test_shadow_mining_a through h) already prove
+# Route B fires on none of the five safety-control fixtures through this
+# same wired path -- every one of their `minimal_trigger is None` assertions
+# would fail if Route B had matched instead of Route A. What remains here:
+# Route B actually firing end-to-end, the frozen precedence order, and the
+# ambiguous dual-match fail-closed behavior.
+# ==========================================================================
+
+_RETURN_TYPE_HIGH = _defect(
+    id="C1",
+    category="CORRECTNESS",
+    severity="HIGH",
+    location="solution.py: email = profile.get(\"email\")",
+    fix=(
+        "Return the value found at user['profile']['email'] regardless of its "
+        "type; only return None when the key/path itself is missing, without "
+        "filtering on type."
+    ),
+)
+
+
+def test_shadow_mining_i_route_b_hit_actual_verdict_unchanged(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A (verdict-neutrality) for Route B: the actual verdict must be identical
+    with mining on vs off, exactly as already proven for Route A."""
+    off_status, off_merged, _ = _run(monkeypatch, tmp_path, [_RETURN_TYPE_HIGH])
+    on_status, on_merged, _ = _run(
+        monkeypatch, tmp_path, [_RETURN_TYPE_HIGH], shadow_adjudicate=True
+    )
+
+    assert on_status == off_status == "UNVERIFIED"
+    assert on_merged["defects"] == off_merged["defects"]
+    assert on_merged["verdict"] == off_merged["verdict"]
+    assert "minimal_trigger" not in on_merged["defects"][0]
+    assert set(on_merged) - set(off_merged) == {"shadow_adjudications"}
+
+
+def test_shadow_mining_j_route_b_hit_shadow_reflects_factual_premise(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """C: Route B's evidence reaches the shadow record as return=None, and the
+    existing, unmodified admissibility logic resolves it to factual-premise /
+    inadmissible-to-block -- while the actual verdict still blocks."""
+    status, merged, _ = _run(
+        monkeypatch, tmp_path, [_RETURN_TYPE_HIGH], shadow_adjudicate=True
+    )
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] == "return=None"
+    assert record["rule"] == "factual-premise"
+    assert record["admissible_to_block"] is False
+    assert status == "UNVERIFIED"
+    assert verdict._has_blocking(merged) is True
+
+
+def test_shadow_mining_k_no_hit_stays_fail_closed_unresolved(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """D: a defect matching neither route behaves exactly as before either route
+    existed -- fail-closed-unresolved, still blocking, still fully authoritative."""
+    defect = _defect(fix="This code has a subtle logic error under load.")
+
+    status, merged, _ = _run(monkeypatch, tmp_path, [defect], shadow_adjudicate=True)
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    assert record["rule"] == "fail-closed-unresolved"
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_shadow_mining_l_judge_supplied_evidence_takes_precedence_over_both_routes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """E: frozen precedence -- judge-supplied minimal_trigger beats Route A and
+    Route B alike, and neither miner may overwrite it, even when the defect's
+    own text would otherwise match one of them."""
+    from engine.verification import pipeline
+
+    defect = _defect(
+        minimal_trigger="user=[]",  # judge-supplied, deliberately NOT what either miner would pick
+        fix=_MINED_HIGH["fix"],  # text that would otherwise match Route A
+    )
+
+    evidence, source = pipeline._select_mined_evidence(defect, TASK, CLEAN)
+    assert evidence == {}
+    assert source == "judge-supplied"
+
+    status, merged, _ = _run(monkeypatch, tmp_path, [defect], shadow_adjudicate=True)
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] == "user=[]"
+    assert status == "UNVERIFIED"
+    # the original, judge-supplied value survives untouched -- neither miner overwrote it
+    assert merged["defects"][0]["minimal_trigger"] == "user=[]"
+
+
+def test_shadow_mining_m_artificial_dual_match_fails_closed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """F: a defect whose text independently matches BOTH routes at once --
+    contrived but real: constructed and confirmed to trigger each miner in
+    isolation before being combined into one defect. Neither route's evidence
+    may be used; the shadow record must show no evidence was applied
+    (fail-closed-unresolved, still admissible/blocking), and the ambiguity
+    must be directly detectable via the selection helper's own diagnostics."""
+    from engine.verification import pipeline
+
+    dual_match_defect = _defect(
+        fix=(
+            "Guard against user not being a dict (e.g., None) and also return "
+            "the email value regardless of its type instead of filtering it "
+            "to None."
+        ),
+    )
+
+    # Confirm, directly, that both routes independently match this text --
+    # this is the precondition the "ambiguous" branch exists to catch.
+    from engine.verification.evidence_mining import (
+        mine_return_value_evidence,
+        mine_trigger_evidence,
+    )
+
+    assert mine_trigger_evidence(dual_match_defect, TASK, CLEAN) == {"minimal_trigger": "user=None"}
+    assert mine_return_value_evidence(dual_match_defect, TASK, CLEAN) == {
+        "minimal_trigger": "return=None"
+    }
+
+    evidence, source = pipeline._select_mined_evidence(dual_match_defect, TASK, CLEAN)
+    assert evidence == {}
+    assert source == "ambiguous"
+
+    status, merged, _ = _run(
+        monkeypatch, tmp_path, [dual_match_defect], shadow_adjudicate=True
+    )
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    assert record["rule"] == "fail-closed-unresolved"
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+    # the original defect is never touched, dual-match or not
+    assert "minimal_trigger" not in merged["defects"][0]
+
+
+def test_shadow_mining_n_security_04_clean_still_receives_no_route_b_evidence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Explicit standalone check (registration section 8): security-04-clean gets
+    no Route B evidence either, through the actual wired path."""
+    defect = _defect(
+        category="SECURITY",
+        severity="CRITICAL",
+        location="solution.py: resolve_safe_fetch_target return addresses[0]",
+        fix=(
+            "The function validates ALL resolved addresses are public but then "
+            "returns addresses[0], not necessarily the one that was validated."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=SEC_04_TASK,
+        code=SEC_04_CLEAN,
+        shadow_adjudicate=True,
+    )
+
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] is None
+    assert record["admissible_to_block"] is True
+    assert status == "UNVERIFIED"

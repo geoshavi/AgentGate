@@ -7,7 +7,10 @@ from engine.runtime.gateway import LLMGateway
 from engine.state.models import VerificationResult
 from engine.verification import admissibility, verdict
 from engine.verification.automated import automated_defects, run_automated_gates
-from engine.verification.evidence_mining import mine_trigger_evidence
+from engine.verification.evidence_mining import (
+    mine_return_value_evidence,
+    mine_trigger_evidence,
+)
 from engine.verification.judge import run_judge_gates
 
 
@@ -64,11 +67,16 @@ def run_verification(
     is pinned by tests/test_shadow_adjudication.py.
 
     Each shadow record is additionally offered a ``minimal_trigger`` mined by
-    ``evidence_mining.mine_trigger_evidence`` from the defect's own existing
-    free text, on a throwaway copy built solely for that one record -- see
-    ``_with_mined_evidence``. This can change what the *shadow* record
-    concludes; it changes nothing about ``merged["defects"]`` or the
-    authoritative verdict, in shadow mode or otherwise (CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md).
+    ``evidence_mining`` from the defect's own existing free text, on a
+    throwaway copy built solely for that one record -- see
+    ``_select_mined_evidence`` / ``_with_mined_evidence``. Two independent
+    routes are tried, in a frozen order (judge-supplied evidence, then
+    declared-parameter-type, then declared-return-type;
+    COMBINED_CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md section 3), and
+    an unexpected match from both routes at once fails closed rather than
+    picking one. This can change what the *shadow* record concludes; it
+    changes nothing about ``merged["defects"]`` or the authoritative verdict,
+    in shadow mode or otherwise.
 
     The two flags are mutually exclusive. One annotates the dict the gate reads
     and the other must not; silently ordering them would make it impossible to
@@ -133,20 +141,64 @@ def _shadow_adjudications(merged: dict, task_text: str, code_snapshot: str) -> l
     return [record for record in records if record is not None]
 
 
+# Source labels _select_mined_evidence can return -- kept as module-level
+# constants so tests and any future diagnostic consumer name them the same
+# way the registration does, rather than re-typing string literals.
+_SOURCE_JUDGE_SUPPLIED = "judge-supplied"
+_SOURCE_ROUTE_A = "route-a"
+_SOURCE_ROUTE_B = "route-b"
+_SOURCE_AMBIGUOUS = "ambiguous"
+_SOURCE_NONE = "none"
+
+
+def _select_mined_evidence(
+    defect: dict, task_text: str, code_snapshot: str
+) -> tuple[dict, str]:
+    """Decide what evidence, if any, a shadow-only copy of ``defect`` should
+    carry, and where it came from.
+
+    Returns ``(evidence, source)``. ``evidence`` is the empty dict unless
+    ``source`` is ``"route-a"`` or ``"route-b"`` -- judge-supplied evidence is
+    already on ``defect`` and needs nothing added, and an ambiguous
+    dual-match fails closed with no evidence applied at all, exactly like no
+    match.
+
+    Frozen precedence
+    (COMBINED_CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md section 3):
+    judge-supplied ``minimal_trigger`` > Route A (declared-parameter-type,
+    ``mine_trigger_evidence``) > Route B (declared-return-type,
+    ``mine_return_value_evidence``) > no evidence. If Route A and Route B
+    both independently produce evidence for the same defect -- never observed
+    in the full v6 historical replay, but not assumed impossible -- neither
+    is used: the registration's own STOP rule treats any such overlap as a
+    REJECT signal for the whole experiment, so silently picking one here
+    would hide exactly the condition that rule exists to catch.
+    """
+    if defect.get("minimal_trigger"):
+        return {}, _SOURCE_JUDGE_SUPPLIED
+
+    route_a = mine_trigger_evidence(defect, task_text, code_snapshot)
+    route_b = mine_return_value_evidence(defect, task_text, code_snapshot)
+
+    if route_a and route_b:
+        return {}, _SOURCE_AMBIGUOUS
+    if route_a:
+        return route_a, _SOURCE_ROUTE_A
+    if route_b:
+        return route_b, _SOURCE_ROUTE_B
+    return {}, _SOURCE_NONE
+
+
 def _with_mined_evidence(defect: dict, task_text: str, code_snapshot: str) -> dict:
-    """A shadow-only copy of ``defect``, augmented with any ``minimal_trigger``
-    ``evidence_mining`` can recover from the defect's own existing free text.
+    """A shadow-only copy of ``defect``, augmented with evidence selected by
+    ``_select_mined_evidence``'s frozen precedence.
 
     Never mutates ``defect``. The original -- not this copy -- is what
     ``merged["defects"]`` continues to hold and what the actual verdict path
     reads; this copy exists only for the one sidecar record built from it.
-    Never overwrites a judge-supplied ``minimal_trigger`` (the control prompt
-    supplies none today, but this stays correct if that ever changes).
     """
-    if defect.get("minimal_trigger"):
-        return defect
-    mined = mine_trigger_evidence(defect, task_text, code_snapshot)
-    return {**defect, **mined} if mined else defect
+    evidence, _source = _select_mined_evidence(defect, task_text, code_snapshot)
+    return {**defect, **evidence} if evidence else defect
 
 
 def _shadow_record(defect: dict, task_text: str, code_snapshot: str) -> dict | None:
