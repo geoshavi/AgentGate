@@ -29,6 +29,7 @@ unadjudicated (and therefore exactly as blocking) as it is today.
 
 from __future__ import annotations
 
+import ast
 import re
 
 from engine.verification.adjudication import _annotation_types, _collect_annotations
@@ -147,3 +148,120 @@ def mine_trigger_evidence(defect: dict, task_text: str, code_snapshot: str) -> d
 
     (name, literal) = next(iter(hits))
     return {"minimal_trigger": f"{name}={literal}"}
+
+
+# ==========================================================================
+# mine_return_value_evidence -- a second, independent miner
+#
+# Targets a different adjudication Fact entirely: not "does a caller-supplied
+# argument contradict a declared parameter type" (adjudication._adjudicate_trigger,
+# above), but "does the function's own return statement, in the shape the
+# judge is objecting to, contradict its own declared return type"
+# (adjudication._adjudicate_return -> rule "factual-premise"). Wholly
+# independent of mine_trigger_evidence: does not read its vocabulary, its
+# regex, or its parameter-candidate logic, and does not change any of it.
+# ==========================================================================
+
+# Bounded objection phrases only -- never bare "type"/"isinstance"/
+# "validation"/"defensive" on their own. Each phrase was observed verbatim
+# (or as a direct paraphrase) in the three historical defects this targets;
+# the infix in the "do not filter" variant is capped at 20 characters so it
+# cannot drift into matching an unrelated sentence spanning the same words.
+_RETURN_OBJECTION = re.compile(
+    r"regardless of (?:its|the) type"
+    r"|without filtering (?:on|by) type"
+    r"|do not filter (?:based on|by) [\w' ]{0,20}type"
+    r"|return(?:ing|s|ed)?\b[^.;]{0,40}\bas[- ]is\b",
+    re.IGNORECASE,
+)
+
+
+def _statements_in_own_scope(node: ast.AST):
+    """Yield every descendant statement of ``node``, without crossing into a
+    nested function/lambda's own scope -- a nested def's return statements
+    belong to it, not to ``node``, and must never be attributed to the wrong
+    function's return annotation."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            continue
+        yield child
+        yield from _statements_in_own_scope(child)
+
+
+def _return_none_ifexp_candidates(code_snapshot: str) -> list[tuple[str, str]]:
+    """Every ``(name, type_name)`` pair for a return statement shaped exactly
+    ``<name> if isinstance(<name>, <type_name>) else None``, inside a function
+    whose own declared return annotation admits ``NoneType``. Proof, not a
+    guess: identity between the ternary's test subject and its true-branch is
+    checked structurally, and the annotation is resolved the same way
+    ``adjudication._adjudicate_return`` itself resolves it.
+    """
+    try:
+        tree = ast.parse(code_snapshot)
+    except (SyntaxError, ValueError):
+        return []
+
+    candidates: list[tuple[str, str]] = []
+    for func in ast.walk(tree):
+        if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        return_types = _annotation_types(func.returns)
+        if return_types is None or type(None) not in return_types:
+            continue
+        for stmt in _statements_in_own_scope(func):
+            if not isinstance(stmt, ast.Return) or not isinstance(stmt.value, ast.IfExp):
+                continue
+            ifexp = stmt.value
+            test = ifexp.test
+            if not (
+                isinstance(test, ast.Call)
+                and isinstance(test.func, ast.Name)
+                and test.func.id == "isinstance"
+                and len(test.args) == 2
+                and isinstance(test.args[0], ast.Name)
+                and isinstance(test.args[1], ast.Name)
+            ):
+                continue
+            tested_name = test.args[0].id
+            if not (isinstance(ifexp.body, ast.Name) and ifexp.body.id == tested_name):
+                continue
+            if not (isinstance(ifexp.orelse, ast.Constant) and ifexp.orelse.value is None):
+                continue
+            candidates.append((tested_name, test.args[1].id))
+    return candidates
+
+
+def mine_return_value_evidence(defect: dict, task_text: str, code_snapshot: str) -> dict:
+    """Recover a ``return=None`` trigger from a defect's own free text, or nothing.
+
+    Fires only when BOTH hold: (1) exactly one function in the whole snapshot
+    has exactly one return statement shaped
+    ``<name> if isinstance(<name>, <type>) else None``, with its own declared
+    return annotation admitting ``NoneType`` -- proving that returning
+    ``None`` there is genuinely in-contract, not merely plausible -- and (2)
+    the defect's own ``location``/``fix`` text contains one of a small,
+    bounded set of phrases objecting to exactly that type-filter-to-None
+    shape. More than one qualifying function or return statement anywhere in
+    the snapshot is an unresolved ambiguity, not a pick-one.
+
+    ``task_text`` is unused, kept for interface symmetry with
+    ``mine_trigger_evidence``. Never raises, never mutates ``defect``, never
+    touches severity, never marks admissibility -- ``adjudication._adjudicate_return``
+    via ``admissibility.decide`` remains the sole authority over what this
+    evidence resolves to.
+    """
+    del task_text
+    if not isinstance(defect, dict):
+        return {}
+
+    location = defect.get("location")
+    fix = defect.get("fix")
+    text = " ".join(v for v in (location, fix) if isinstance(v, str))
+    if not text or not _RETURN_OBJECTION.search(text):
+        return {}
+
+    candidates = _return_none_ifexp_candidates(code_snapshot)
+    if len(candidates) != 1:
+        return {}
+
+    return {"minimal_trigger": "return=None"}

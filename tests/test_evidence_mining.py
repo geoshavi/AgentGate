@@ -12,7 +12,10 @@ NOT wired into pipeline.py, verdict.py, or any authoritative path. These
 tests exercise `mine_trigger_evidence` in isolation.
 """
 
-from engine.verification.evidence_mining import mine_trigger_evidence
+from engine.verification.evidence_mining import (
+    mine_return_value_evidence,
+    mine_trigger_evidence,
+)
 
 # --- edge_case-02 fixtures (dict-shaped fixtures deliberately mirror the
 # historical task/code, but the module under test never sees a case id) ----
@@ -365,3 +368,313 @@ def test_lowercase_none_is_not_mistaken_for_the_python_literal() -> None:
     evidence = mine_trigger_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
 
     assert evidence == {}
+
+
+# ==========================================================================
+# mine_return_value_evidence -- a second, independent miner
+#
+# Targets the OTHER edge_case-02-clean claim family (runs 55, 59, 62): the
+# judge objects to `email if isinstance(email, str) else None`, asking for
+# the raw value "regardless of type" instead -- which would violate the
+# function's own `-> str | None` return annotation whenever email is present
+# but not a string. This is a declared-RETURN-type contradiction
+# (adjudication._adjudicate_return / rule "factual-premise"), a completely
+# separate adjudication Fact from the parameter-type miner above. Wholly
+# independent function; does not touch mine_trigger_evidence's rules at all.
+# ==========================================================================
+
+# Functions whose return-type ternary shape does NOT qualify, for the
+# negative-control tests (F/G/H/I).
+EDGE_02_RETURN_NOT_OPTIONAL = (
+    "def get_user_email(user: dict) -> str:\n"
+    '    profile = user.get("profile")\n'
+    "    if not isinstance(profile, dict):\n"
+    '        return ""\n'
+    '    email = profile.get("email")\n'
+    "    return email if isinstance(email, str) else None\n"
+)
+EDGE_02_RETURN_NO_IFEXP = (
+    "def get_user_email(user: dict) -> str | None:\n"
+    '    profile = user.get("profile")\n'
+    "    if not isinstance(profile, dict):\n"
+    "        return None\n"
+    '    email = profile.get("email")\n'
+    "    if isinstance(email, str):\n"
+    "        return email\n"
+    "    return None\n"
+)
+EDGE_02_RETURN_MISMATCHED_NAME = (
+    "def get_user_email(user: dict) -> str | None:\n"
+    '    profile = user.get("profile")\n'
+    "    if not isinstance(profile, dict):\n"
+    "        return None\n"
+    '    email = profile.get("email")\n'
+    '    other = profile.get("other")\n'
+    "    return other if isinstance(email, str) else None\n"
+)
+EDGE_02_RETURN_ELSE_NOT_NONE = (
+    "def get_user_email(user: dict) -> str:\n"
+    '    profile = user.get("profile")\n'
+    "    if not isinstance(profile, dict):\n"
+    '        return ""\n'
+    '    email = profile.get("email")\n'
+    '    return email if isinstance(email, str) else ""\n'
+)
+
+
+def _return_defect(**overrides: object) -> dict:
+    base: dict = {
+        "id": "C1",
+        "category": "CORRECTNESS",
+        "severity": "HIGH",
+        "location": "solution.py: email = profile.get(\"email\")",
+        "fix": "change something",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_r1_run_55_style_text_is_mined() -> None:
+    defect = _return_defect(
+        fix=(
+            "Return the value of profile['email'] as-is when present, only returning "
+            "None if the key or path is missing; do not filter based on the value's "
+            "type (e.g., {'profile': {'email': 123}} should return 123, not None)."
+        ),
+    )
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+
+    assert evidence == {"minimal_trigger": "return=None"}
+
+
+def test_r2_run_59_style_text_is_mined() -> None:
+    defect = _return_defect(
+        fix=(
+            "Remove the isinstance(email, str) check and simply return "
+            "profile.get('email') (or use .get() chaining) so that the actual value "
+            "is returned whenever profile['email'] key exists, regardless of its "
+            "type; only return None when profile or email key is truly absent, per "
+            "the task requirement of returning None only if part of the path is "
+            "missing."
+        ),
+    )
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+
+    assert evidence == {"minimal_trigger": "return=None"}
+
+
+def test_r3_run_62_style_text_is_mined() -> None:
+    defect = _return_defect(
+        fix=(
+            "Return the value found at user['profile']['email'] regardless of its "
+            "type; only return None when the key/path itself is missing (e.g., use "
+            "`return profile.get('email')` after confirming profile is a dict, "
+            "without filtering on type)."
+        ),
+    )
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+
+    assert evidence == {"minimal_trigger": "return=None"}
+
+
+def test_r4_emitted_evidence_shape_is_exact() -> None:
+    """No stray keys, no extra fields -- exactly one key, exactly this value."""
+    defect = _return_defect(fix="Return it regardless of its type.")
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+
+    assert evidence == {"minimal_trigger": "return=None"}
+    assert list(evidence.keys()) == ["minimal_trigger"]
+
+
+def test_r5_historical_texts_resolve_through_real_admissibility() -> None:
+    """The existing, unmodified admissibility.decide() must independently confirm
+    what this miner's evidence resolves to -- proving the miner's output is not
+    merely shaped correctly but actually usable by the frozen adjudication path."""
+    from engine.verification import admissibility
+
+    historical_fixes = [
+        (
+            "Return the value of profile['email'] as-is when present, only returning "
+            "None if the key or path is missing; do not filter based on the value's "
+            "type (e.g., {'profile': {'email': 123}} should return 123, not None)."
+        ),
+        (
+            "Remove the isinstance(email, str) check and simply return "
+            "profile.get('email') so that the actual value is returned regardless of "
+            "its type; only return None when profile or email key is truly absent."
+        ),
+        (
+            "Return the value found at user['profile']['email'] regardless of its "
+            "type; only return None when the key/path itself is missing, without "
+            "filtering on type."
+        ),
+    ]
+    for fix in historical_fixes:
+        defect = _return_defect(fix=fix)
+        evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+        assert evidence == {"minimal_trigger": "return=None"}
+
+        augmented = {**defect, **evidence}
+        decision = admissibility.decide(augmented, EDGE_02_TASK, EDGE_02_CLEAN)
+        assert decision.admissible is False
+        assert decision.rule == "factual-premise"
+
+
+def test_r6_return_type_not_optional_is_never_mined() -> None:
+    """F: the declared return type doesn't admit None at all -- returning None would
+    be a genuine violation, not an admitted one, so nothing may be mined."""
+    defect = _return_defect(fix="Return it regardless of its type, without filtering.")
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_RETURN_NOT_OPTIONAL)
+
+    assert evidence == {}
+
+
+def test_r7_return_shape_without_ifexp_is_never_mined() -> None:
+    """G: the same logic expressed as an if/else statement instead of a ternary
+    IfExp -- the miner requires the exact expression shape, not the behavior."""
+    defect = _return_defect(fix="Return it regardless of its type, without filtering.")
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_RETURN_NO_IFEXP)
+
+    assert evidence == {}
+
+
+def test_r8_mismatched_isinstance_name_is_never_mined() -> None:
+    """H: the ternary's test checks one name but returns a different one -- exact
+    name identity must hold, not "some isinstance check exists somewhere"."""
+    defect = _return_defect(fix="Return it regardless of its type, without filtering.")
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_RETURN_MISMATCHED_NAME)
+
+    assert evidence == {}
+
+
+def test_r9_ifexp_else_branch_not_none_is_never_mined() -> None:
+    """I: the else branch is some other fallback, not the literal None -- the whole
+    point is that returning None is what the code does and what the annotation
+    admits, so a non-None else branch is a different shape entirely."""
+    defect = _return_defect(fix="Return it regardless of its type, without filtering.")
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_RETURN_ELSE_NOT_NONE)
+
+    assert evidence == {}
+
+
+def test_r10_generic_type_complaint_without_bounded_phrase_is_never_mined() -> None:
+    """J: bare mentions of "type"/"isinstance"/"validation"/"defensive" must never
+    match on their own -- only the specific, bounded objection phrases do."""
+    for fix in (
+        "There is a type issue here that should be fixed.",
+        "This isinstance check looks defensive.",
+        "Consider revisiting the validation logic for this field.",
+        "The type of this value is not well documented.",
+    ):
+        defect = _return_defect(fix=fix)
+        evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+        assert evidence == {}, f"unexpectedly mined for: {fix!r}"
+
+
+def test_r11_defect_with_no_free_text_is_never_mined() -> None:
+    defect = {"id": "C1", "category": "CORRECTNESS", "severity": "HIGH"}
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+
+    assert evidence == {}
+
+
+def test_r12_unparseable_code_snapshot_is_never_mined() -> None:
+    defect = _return_defect(fix="Return it regardless of its type.")
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, "def broken(:\n")
+
+    assert evidence == {}
+
+
+# --- safety regressions: the four broken controls plus security-04-clean ---
+
+
+def test_r_quality_04_broken_is_never_mined() -> None:
+    defect = _return_defect(
+        fix=(
+            "Define a module-level constant, e.g. HIGH_VALUE_THRESHOLD = 100, and "
+            "replace both literal 100 comparisons with it, per the explicit task "
+            "requirement."
+        ),
+    )
+
+    evidence = mine_return_value_evidence(defect, QUALITY_04_TASK, QUALITY_04_BROKEN)
+
+    assert evidence == {}
+
+
+def test_r_security_03_broken_is_never_mined() -> None:
+    defect = _return_defect(
+        fix="Use secrets.token_hex instead of the random module, which is not "
+        "cryptographically secure for password-reset tokens.",
+    )
+
+    evidence = mine_return_value_evidence(defect, SEC_03_TASK, SEC_03_BROKEN)
+
+    assert evidence == {}
+
+
+def test_r_edge_case_02_broken_is_never_mined() -> None:
+    defect = _return_defect(
+        fix=(
+            "Missing handling for an absent 'profile' or 'email' key: this raises "
+            "KeyError instead of returning None."
+        ),
+    )
+
+    evidence = mine_return_value_evidence(defect, EDGE_02_TASK, EDGE_02_BROKEN)
+
+    assert evidence == {}
+
+
+def test_r_security_04_broken_is_never_mined() -> None:
+    defect = _return_defect(
+        fix=(
+            "No validation of the resolved address at all; internal/private "
+            "addresses are never rejected, allowing SSRF against internal services."
+        ),
+    )
+
+    evidence = mine_return_value_evidence(defect, SEC_04_TASK, SEC_04_BROKEN)
+
+    assert evidence == {}
+
+
+def test_r_security_04_clean_is_never_mined() -> None:
+    defect = _return_defect(
+        fix=(
+            "The function validates ALL resolved addresses are public but then "
+            "returns addresses[0], the first address from getaddrinfo, not "
+            "necessarily the one that was validated in a TOCTOU/DNS-rebinding sense."
+        ),
+    )
+
+    evidence = mine_return_value_evidence(defect, SEC_04_TASK, SEC_04_CLEAN)
+
+    assert evidence == {}
+
+
+def test_r_existing_parameter_miner_rules_are_unmodified() -> None:
+    """The new miner must not weaken or broaden mine_trigger_evidence -- pin that
+    its behavior on the canonical hit is byte-for-byte the same as before."""
+    defect = _defect(
+        location="solution.py: user.get(\"profile\")",
+        fix=(
+            "Guard against user not being a dict (e.g., None or other type) by "
+            "checking isinstance(user, dict) before calling .get, to avoid "
+            "AttributeError."
+        ),
+    )
+
+    evidence = mine_trigger_evidence(defect, EDGE_02_TASK, EDGE_02_CLEAN)
+
+    assert evidence == {"minimal_trigger": "user=None"}
