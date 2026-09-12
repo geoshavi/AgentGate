@@ -518,6 +518,101 @@ intervention `RESPONSE_INSTRUCTION` sha256
   `src/engine/verification/judge.py` — while preserving every historical run record,
   addendum, and this entry unchanged. That action has not been taken in this turn.
 
+## security-04-clean — v6 dataset/spec limitation (adjudicated, closed, not a verifier target)
+
+Continues the tracking opened by the dataset v4/v5 boundary note above, which named
+`edge_case-02-clean` and `security-04-clean` as the two of run 46's four `false_unverified`
+cases left "reserved for later verifier work." This entry closes that reservation for
+`security-04-clean` with a full offline forensic adjudication (no benchmark run, no
+provider call, no dataset change) and records the outcome as a **dataset/spec limitation**,
+not an open verifier target.
+
+- **`security-04-clean` is 0/16 across every recorded v6 run (48-63).** It has never once
+  returned `OK` at this dataset version. Of the 16 failures, 7 (runs 54, 56, 57, 58, 59, 62,
+  63) carry a schema failure — 3 of those (57, 58, 63) with **zero** blocking defects at
+  all — so at most 9 of the 16 could ever be reached by any admissibility mechanism; a
+  schema failure dominates `verdict.gate` regardless of what any defect-level mechanism
+  concludes.
+- **Under the fixture author's own narrow reading of the byte-exact v6 task text, the clean
+  implementation satisfies every explicit requirement.** The task states no RFC, no address
+  standard, and no enumerated class list; `_is_public()` checks exactly
+  `is_private`/`is_loopback`/`is_link_local`/`is_reserved`/`is_multicast`/`is_unspecified`,
+  and `resolve_safe_fetch_target()` provably returns only an address drawn from the same
+  list it just exhaustively validated (the data-flow property verified structurally in the
+  prior forensic-design turn). Verified directly on CPython 3.14.5, the interpreter this
+  project runs: of every address class raised historically as a gap — IPv4-mapped loopback,
+  IPv4-mapped RFC1918, IPv4-mapped link-local/metadata, NAT64, 6to4, Teredo, documentation
+  nets, `0.0.0.0/8`, benchmark ranges — **all are blocked** by the checked properties on this
+  interpreter. Only **CGNAT (`100.64.0.0/10`)** passes through unblocked, since Python's
+  `is_private` explicitly excludes it and the task names no broader standard
+  (`is_global`, "non-globally-routable") that would require it.
+- **Measured classification of the historical HIGH/CRITICAL record (36 defects, v6 runs
+  48-63, direct DB query, not sampling):** 23/36 raise a DNS-rebinding/re-resolution claim
+  the task's own explicit guarantee excludes ("the caller connects to the address you
+  return and does not look the host up again"); 21/36 assert the returned address "wasn't
+  validated," which is data-flow-disproved; 17/36 assert an IPv4-mapped/NAT64/6to4/Teredo
+  classification gap that is factually wrong on this interpreter; 17/36 raise
+  out-of-contract `getaddrinfo` selection/ordering concerns (family, socktype, determinism
+  — the task states no such requirement); 9/36 raise special-range coverage, of which only
+  the CGNAT component is factually live. **0 of 36 raise only one of these categories** —
+  every HIGH/CRITICAL finding on this case is a bundle of at least one disproved or
+  out-of-contract claim alongside, at most, the one live CGNAT question.
+- **Offline text-attribution measurement (temporary scratch classifier, not committed):**
+  of 99 total `security-04-clean` defect records (v6, runs 48-63), 36 HIGH/CRITICAL, exactly
+  15 matched the narrow "returned address wasn't validated" text pattern, and **15 of 15
+  were excluded** for containing a bundled secondary concern (IPv4-mapped/CGNAT/pivot
+  language such as "however"/"more importantly"/"the real issue is"). **Zero safe text
+  candidates remained**, and this held before any AST/data-flow proof was even attempted.
+  The same filter produced **zero** condition-A hits across all 980 v6 broken-case defect
+  records — the structural language this case's dispute turns on does not occur anywhere
+  else in the dataset.
+- **The full AST/data-flow checker proposed to prove the "returned value" claim false was
+  designed and rejected without being built**, on this measured evidence: estimated maximum
+  historical suppression yield = 0, confirmed by direct measurement rather than assumed.
+  Building the checker (a genuinely new, non-trivial code-fact category, not a reuse of
+  existing `adjudication.py`/`admissibility.py` machinery) would have had nothing to act on.
+  No verifier-side mechanism — the evidence-mining prompt-neutral miner, the
+  `excluded_by_clause` guarantee route, or a bespoke data-flow checker — has safe material
+  yield on this case, for three independent reasons: the 9-of-16 schema-failure ceiling, the
+  universal bundling of the false claim with a genuine, unaddressed CGNAT-adjacent concern,
+  and the fact that every guarantee-adjacent claim paraphrases rather than quotes the task's
+  guarantee clause (so the existing verbatim-match `_adjudicate_guarantee` route cannot
+  reach it either).
+- **This is a spec-precision defect, not a verifier defect.** The task text says
+  "internal/private" without stating whether the coverage standard is Python's own
+  `is_private`-family properties (which the clean fixture, as the reference answer,
+  evidently assumes) or a broader "non-globally-routable"/`is_global` standard (which a
+  live judge reliably imports from general SSRF-hardening knowledge). Both readings are
+  defensible from the text alone; the task does not disambiguate them. **It is not safe to
+  close this gap with a broad verifier-side suppression rule** — a rule wide enough to
+  clear the historical `special_range_coverage` bundle would suppress the one factually
+  correct residual finding (CGNAT) along with the disproved ones.
+- **Deferred to a future dataset revision (v7), not undertaken now:** (1) clarify the task's
+  coverage standard with one added clause, and (2) close the CGNAT gap in the clean fixture
+  (an explicit `100.64.0.0/10` check, or `ip.is_global`). Recommended as one bundled change
+  if and when v7 is opened for independent reasons — **not** as sufficient reason to open v7
+  on its own, per the `git-safety`/`baseline-evidence` cost of a dataset-version boundary
+  (every one of the 63 recorded runs would stop being comparable across it).
+- **Dataset v6 is not changed by this entry.** No file under `src/engine/eval/dataset.py`
+  was touched, no new dataset version was opened, and every recorded v6 run (48-63) remains
+  valid, unchanged, and exactly as previously recorded in this file.
+- **`security-04-broken` is unaffected by any reading of this dispute.** `return
+  socket.gethostbyname(host)` performs no classification at all — under the narrowest
+  possible interpretation of "internal/private" it still lets `127.0.0.1`, `10.0.0.1`, and
+  `169.254.169.254` straight through, and never returns `None` for an unsafe host. Its
+  blocking status does not depend on where the CGNAT/coverage-standard line is drawn.
+  `security-03-broken`, `quality-04-broken`, and `edge_case-02-broken` are structurally
+  unrelated (no address classification involved) and untouched by this entry.
+
+### Verifier target status (the four cases named in the v4/v5 boundary note, above)
+
+| case | status |
+|---|---|
+| `correctness-02-clean` | **Fixed** — dataset v5, amendment A-4 (float-subtraction boundary repair) |
+| `security-02-clean` | **Fixed** — dataset v5, amendment A-5 (converter argument-injection repair) |
+| `edge_case-02-clean` | **Remaining active verifier-side target.** Addressed partially and non-authoritatively by the Contract Evidence Mining shadow prototype (`docs/benchmark/CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md` and its Addendum 01): offline replay found the mechanism would resolve 2 of its 6 historical v6 `UNVERIFIED` runs; no full-fix claim is made, and no authoritative wiring exists. |
+| `security-04-clean` | **Reclassified, this entry.** Not a verifier defect — a v6 dataset/spec-precision limitation. Deferred to a future dataset revision (v7); no verifier-side fix is safe to pursue at v6. |
+
 ## Notes
 
 - Runs 6-9 were executed on an identical commit (942f509) and show a spread of 29-32/40 correct verdicts (72.5%-80.0%), i.e. a ±3/40 noise floor. Single-run deltas smaller than this are not interpretable as real changes.
