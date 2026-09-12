@@ -212,6 +212,131 @@ def test_parse_critic_still_rejects_out_of_enum_category_unchanged_by_this_fix()
     assert any("category" in e for e in errors)
 
 
+# --- Registration B: schema tolerance for optional evidence fields ----------
+#
+# Pins docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B.md section 9:
+# enforce_critic_schema is frozen and already tolerates unlisted per-defect
+# keys (schema.py:20 checks only for missing required keys; the stray-key
+# check at schema.py:53 is top-level only). These tests exercise _parse_critic
+# -- the boundary judge.py actually calls -- to prove the three optional
+# evidence fields never make an otherwise well-formed critic invalid, in any
+# combination, and that DEFECT_KEYS itself was not widened to admit them.
+
+
+def _critic_with_defect(extra: dict | None = None) -> str:
+    defect = {
+        "id": "C1",
+        "category": "CORRECTNESS",
+        "severity": "HIGH",
+        "location": "solution.py:1",
+        "fix": "guard the empty case",
+    }
+    if extra:
+        defect.update(extra)
+    return json.dumps({"defects": [defect], "verdict": "FAIL"})
+
+
+def test_parse_critic_accepts_defect_with_no_evidence_fields() -> None:
+    """Historical/control-shaped output -- no evidence keys at all -- must stay valid."""
+    critic, errors = _parse_critic(_critic_with_defect())
+    assert errors == []
+    assert critic["defects"][0]["severity"] == "HIGH"
+
+
+def test_parse_critic_accepts_defect_with_all_three_evidence_fields() -> None:
+    critic, errors = _parse_critic(
+        _critic_with_defect(
+            {
+                "grounded_in_clause": "must reject empty input",
+                "minimal_trigger": "amount=-1",
+                "grounding_route": "explicit_requirement",
+            }
+        )
+    )
+    assert errors == []
+    defect = critic["defects"][0]
+    assert defect["grounding_route"] == "explicit_requirement"
+    assert defect["minimal_trigger"] == "amount=-1"
+    assert defect["severity"] == "HIGH"
+
+
+def test_parse_critic_accepts_defect_with_partial_evidence() -> None:
+    critic, errors = _parse_critic(_critic_with_defect({"minimal_trigger": "amount=-1"}))
+    assert errors == []
+    defect = critic["defects"][0]
+    assert defect["minimal_trigger"] == "amount=-1"
+    assert "grounding_route" not in defect
+    assert "grounded_in_clause" not in defect
+
+
+def test_parse_critic_accepts_defect_with_null_evidence_fields() -> None:
+    critic, errors = _parse_critic(
+        _critic_with_defect(
+            {
+                "grounded_in_clause": None,
+                "minimal_trigger": None,
+                "grounding_route": None,
+            }
+        )
+    )
+    assert errors == []
+    assert critic["defects"][0]["grounding_route"] is None
+
+
+def test_parse_critic_accepts_out_of_enum_grounding_route_without_invalidating_the_defect() -> None:
+    """enforce_critic_schema does not enforce GROUNDING_ROUTES -- that is
+    extract_evidence's job in the independent adjudicator (adjudication.py,
+    frozen by this registration, already pinned by
+    test_extract_evidence_ignores_non_string_and_malformed_values). An
+    unrecognised route must not fail schema validation for the rest of an
+    otherwise well-formed critic; extract_evidence fails it closed later by
+    discarding the value, not by rejecting the response."""
+    critic, errors = _parse_critic(_critic_with_defect({"grounding_route": "runtime_premise"}))
+    assert errors == []
+    assert critic["defects"][0]["grounding_route"] == "runtime_premise"
+
+
+def test_evidence_fields_do_not_widen_defect_keys() -> None:
+    from engine.verification.rubric import DEFECT_KEYS
+
+    assert DEFECT_KEYS == frozenset({"id", "category", "severity", "location", "fix"})
+    for field in ("grounded_in_clause", "minimal_trigger", "grounding_route"):
+        assert field not in DEFECT_KEYS
+
+
+def test_verdict_and_severity_unaffected_by_presence_of_evidence_fields() -> None:
+    """Same defect, same severity, only evidence fields differ -- merge()/gate() must
+    produce identical results either way. Evidence is additive prompt text; it must
+    not change the downstream verdict mechanism at all."""
+    without_evidence = _gateway(_critic_with_defect())
+    with_evidence = _gateway(
+        _critic_with_defect(
+            {
+                "grounded_in_clause": "must reject empty input",
+                "minimal_trigger": "amount=-1",
+                "grounding_route": "explicit_requirement",
+            }
+        )
+    )
+
+    outcomes = []
+    for gateway in (without_evidence, with_evidence):
+        critics, schema_errors = run_judge_gates(
+            gateway,
+            _budget(),
+            "claude-haiku-4-5-20251001",
+            "do the thing",
+            "print('hi')",
+            run_id=1,
+            task_id="task-1",
+            conn=None,
+        )
+        merged = verdict.merge(critics, [])
+        outcomes.append((merged["verdict"], verdict.gate(merged, True, schema_errors)))
+
+    assert outcomes[0] == outcomes[1] == ("FAIL", "UNVERIFIED")
+
+
 def test_run_judge_gates_returns_one_critic_per_lens() -> None:
     critics, schema_errors = run_judge_gates(
         _gateway(_ok_critic_json()),
@@ -1332,6 +1457,28 @@ _REGISTERED_SEVERITY_BLOCK = (
     "you can ground."
 )
 
+# Registration B's optional evidence-capture block
+# (docs/benchmark/EVIDENCE_CAPTURE_PROMPT_REGISTRATION_B.md), inserted before the
+# grounded-severity ceiling above per section 5, so the ceiling stays the final
+# instruction unchanged.
+_REGISTERED_EVIDENCE_BLOCK = (
+    "You may optionally attach up to three evidence fields to any defect, to "
+    "record what you observed rather than to decide anything: "
+    "grounded_in_clause (a span of the task text above, copied verbatim, that "
+    "the finding rests on), minimal_trigger (the smallest concrete argument "
+    "demonstrating the defect, given as \"name=<python literal>\" for one of "
+    "the code's own declared parameters — never \"return=...\"), and "
+    "grounding_route (exactly one of explicit_requirement, permitted_input, "
+    "stated_purpose, or none/unclear). All three are optional, forever: omit "
+    "any or all of them, and a defect carrying none of them is a complete, "
+    "valid finding that keeps its full severity. These fields are not a "
+    "decision — do not use them to decide whether a finding is in scope, "
+    "whether it may block, whether it is admissible, or whether to report it. "
+    "Never raise a defect's severity because these fields are present, and "
+    "never lower it because they are absent or hard to produce; severity is "
+    "assigned from impact alone, exactly as below."
+)
+
 # The instruction exactly as it stood at the pre-intervention commit (16309b5).
 _PRE_INTERVENTION_RESPONSE_INSTRUCTION = (
     "\n\nRespond with ONLY a JSON object, no prose before or after, no markdown fences:\n"
@@ -1357,11 +1504,88 @@ def test_registered_block_sits_at_the_registered_placement() -> None:
 
 
 def test_the_intervention_is_purely_additive() -> None:
-    """Everything that existed before the intervention survives it byte-for-byte --
-    including the 'FAIL iff CRITICAL or HIGH' verdict rule and the closed category enum."""
+    """Everything that existed before the grounded-severity intervention survives it
+    byte-for-byte -- including the 'FAIL iff CRITICAL or HIGH' verdict rule and the
+    closed category enum -- and Registration B's evidence block is inserted between
+    it and the ceiling, never after: the ceiling must remain the final instruction."""
     assert RESPONSE_INSTRUCTION.startswith(_PRE_INTERVENTION_RESPONSE_INSTRUCTION)
     added = RESPONSE_INSTRUCTION[len(_PRE_INTERVENTION_RESPONSE_INSTRUCTION) :]
-    assert added == "\n" + _REGISTERED_SEVERITY_BLOCK, "only the registered block was added"
+    assert added == "\n" + _REGISTERED_EVIDENCE_BLOCK + "\n" + _REGISTERED_SEVERITY_BLOCK, (
+        "only the registered evidence block and the ceiling were added, in that order"
+    )
+
+
+def test_evidence_block_sits_before_the_grounded_severity_ceiling() -> None:
+    """Registration B section 5: the evidence block is placed BEFORE the ceiling, and
+    the ceiling remains the final relevant instruction so its semantics are unchanged."""
+    idx_evidence = RESPONSE_INSTRUCTION.index(_REGISTERED_EVIDENCE_BLOCK)
+    idx_ceiling = RESPONSE_INSTRUCTION.index(_REGISTERED_SEVERITY_BLOCK)
+    assert idx_evidence < idx_ceiling
+    assert RESPONSE_INSTRUCTION.endswith(_REGISTERED_SEVERITY_BLOCK)
+
+
+def test_evidence_block_names_only_the_three_registered_fields() -> None:
+    """Section 3.3: excluded_by_clause and runtime_probe are withheld from the prompt
+    -- both can strip a finding's blocking authority through a premise the judge
+    itself would author, which this registration explicitly forbids requesting."""
+    for field in ("grounded_in_clause", "minimal_trigger", "grounding_route"):
+        assert field in _REGISTERED_EVIDENCE_BLOCK
+    assert "excluded_by_clause" not in RESPONSE_INSTRUCTION
+    assert "runtime_probe" not in RESPONSE_INSTRUCTION
+
+
+def test_evidence_block_emits_only_the_canonical_routes() -> None:
+    """Section 3.2: exactly these four, byte for byte. An out-of-enum route is
+    silently discarded by extract_evidence with no record of the raw string, so
+    'omitted' and 'unrecognised' become indistinguishable -- the prompt must never
+    invite a value outside the canonical set."""
+    assert (
+        "explicit_requirement, permitted_input, stated_purpose, or none/unclear"
+        in _REGISTERED_EVIDENCE_BLOCK
+    )
+    assert "runtime_premise" not in RESPONSE_INSTRUCTION
+    assert "none_or_unclear" not in RESPONSE_INSTRUCTION
+
+
+def test_evidence_block_scopes_minimal_trigger_away_from_return() -> None:
+    """Section 3.3: minimal_trigger must never bind `return=...`, which would route
+    into the adjudicator-owned violation_present_in_submitted_code fact via
+    _adjudicate_return rather than the judge-safe _adjudicate_trigger path."""
+    assert '"return=..."' in _REGISTERED_EVIDENCE_BLOCK
+    assert "never \"return=...\"" in _REGISTERED_EVIDENCE_BLOCK
+
+
+def test_evidence_block_asks_nothing_the_judge_may_not_decide() -> None:
+    """Section 4: these are adjudicator-owned facts, and this registration requires
+    the prompt never name them as something the judge decides."""
+    forbidden = (
+        "trigger_in_contract",
+        "premise_excluded_by_guarantee",
+        "premise_depends_on_runtime_behaviour",
+        "violation_present_in_submitted_code",
+        "self_contradiction",
+        "admissible_to_block",
+    )
+    for term in forbidden:
+        assert term not in RESPONSE_INSTRUCTION
+
+
+def test_evidence_block_preserves_severity_independence() -> None:
+    """Section 4: severity must never move because evidence is present, absent, easy,
+    or hard to produce."""
+    assert "Never raise a defect's severity because these fields are present" in (
+        _REGISTERED_EVIDENCE_BLOCK
+    )
+    assert "never lower it because they are absent or hard to produce" in (
+        _REGISTERED_EVIDENCE_BLOCK
+    )
+
+
+def test_evidence_block_declares_all_three_fields_optional_forever() -> None:
+    assert "All three are optional, forever" in _REGISTERED_EVIDENCE_BLOCK
+    assert "a defect carrying none of them is a complete, valid finding" in (
+        _REGISTERED_EVIDENCE_BLOCK
+    )
 
 
 def test_registered_block_names_no_dataset_case_or_task() -> None:
