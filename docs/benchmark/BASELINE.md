@@ -448,6 +448,19 @@ intervention `RESPONSE_INSTRUCTION` sha256
   this case in run 57 (structured grounding, `9d20c33`, zero CRITICAL/HIGH from any lens)
   and run 52 (grounded-severity baseline arm). `quality-04-broken` false-passing is now a
   recorded background risk across **three independent configurations** (52, 57, 62).
+- **Correction (2026-09-12): the lens attribution two bullets above was wrong.** That
+  paragraph states the lost blocker came from the `correctness` lens. Re-querying
+  `eval_case_defects` for runs 58-62 directly establishes this is incorrect: in **all four**
+  Phase 0 control runs (58-61), the sole blocking HIGH on `quality-04-broken` was reported by
+  the **`code-quality`** lens (fix text pattern: "Define a module-level constant... per the
+  explicit task requirement"), while `correctness` and `security` reported the same
+  underlying finding redundantly at MEDIUM/LOW in those same runs — never HIGH. In run 62,
+  it is the **`code-quality`** lens's finding that demotes from HIGH to MEDIUM;
+  `correctness`'s finding was already MEDIUM in every control run and stays MEDIUM here. The
+  error was citing the wrong lens name when this entry was first written. **Corrected
+  attribution: `code-quality`, not `correctness`.** This does not change any numerical
+  result, the `false_pass` count, any §12 STOP-rule determination, or the REJECTED/CLOSED
+  conclusion — all of those are lens-independent and were and remain correct as recorded.
 - **The false pass came from judge severity movement, not from shadow admissibility.**
   `verdict.gate()` reads `d["severity"]` directly and is unmodified; nothing in
   `admissibility.py` was invoked authoritatively (`--shadow-adjudicate` only,
