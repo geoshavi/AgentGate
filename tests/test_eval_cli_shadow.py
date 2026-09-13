@@ -1,13 +1,20 @@
-"""`engine bench --shadow-adjudicate`: the CLI surface for the verdict-neutral
-shadow path committed at 4158408.
+"""`engine bench --shadow-adjudicate` / `--adjudicate` / `--case-id`: the CLI
+surface for both adjudication modes.
 
-The flag only chooses whether adjudication records are *computed and stored*.
-It cannot change a verdict: `run_verification` puts shadow records in a
-separate key that `verdict.gate` never reads, and that property is pinned by
-tests/test_shadow_adjudication.py. What these tests pin is narrower and is the
-part the CLI owns -- that the flag reaches `run_benchmark` when asked for,
-that its absence is indistinguishable from before the flag existed, and that
-the CLI offers no way to turn on authoritative adjudication at all.
+`--shadow-adjudicate` only chooses whether adjudication records are *computed
+and stored*. It cannot change a verdict: `run_verification` puts shadow
+records in a separate key that `verdict.gate` never reads, and that property
+is pinned by tests/test_shadow_adjudication.py.
+
+`--adjudicate` is the authoritative counterpart, deliberately reachable only
+together with `--case-id`: the CLI refuses it outright on a full or
+category-wide run, before any provider call, so it cannot be turned on by
+accident against a random paid benchmark. What these tests pin is the part
+the CLI owns -- that each flag reaches `run_benchmark` correctly, that
+neither flag's absence changes anything about the pre-flag CLI, that the two
+modes cannot be combined (both at the argparse level and, as a second line of
+defense, inside `run_verification` itself), and that `--adjudicate` without
+`--case-id` is refused before any provider call.
 
 No test here makes an LLM call. `run_benchmark` is replaced wholesale, and the
 --dry-run cases run with every provider key deleted, so constructing a gateway
@@ -82,19 +89,25 @@ def test_bench_without_the_flag_requests_no_shadow_adjudication(monkeypatch, tmp
 
 
 def test_bench_without_the_flag_passes_the_same_arguments_as_before(monkeypatch, tmp_path) -> None:
-    """Default mode must be indistinguishable from the pre-flag CLI."""
+    """Default mode must be indistinguishable from the pre-flag CLI on every
+    argument shadow-adjudicate already covered, plus the new ones defaulting
+    off/unset."""
     captured = _bench(monkeypatch, tmp_path, [])
 
     assert captured["provider_name"] == "anthropic"
     assert captured["category"] is None
     assert captured["judge_model"]
     assert captured["config"] is not None
+    assert captured["case_ids"] is None
+    assert captured["adjudicate"] is False
     assert set(captured) - {"_exit_code"} == {
         "config",
         "provider_name",
         "judge_model",
         "category",
+        "case_ids",
         "shadow_adjudicate",
+        "adjudicate",
     }
 
 
@@ -125,46 +138,135 @@ def test_shadow_flag_composes_with_category(monkeypatch, tmp_path) -> None:
 
 
 # ==========================================================================
-# 3. authoritative and shadow adjudication cannot both be enabled
+# 3. authoritative adjudication: gated behind --case-id, mutually exclusive
+#    with shadow, and never reachable against a full or category-wide run
 # ==========================================================================
 
 
-def test_cli_exposes_no_authoritative_adjudication_flag(monkeypatch, tmp_path) -> None:
-    """The only adjudication mode reachable from the CLI is the shadow one, so
-    the ambiguous combination `run_verification` rejects cannot be constructed
-    here at all."""
-    captured = _bench(monkeypatch, tmp_path, ["--shadow-adjudicate"])
+def test_bench_rejects_adjudicate_without_case_id(monkeypatch, tmp_path, capsys) -> None:
+    """The core safety property: --adjudicate alone can never launch a full
+    (or category-wide) paid run. Refused by the CLI itself, before
+    load_config/select_cases/run_benchmark are ever reached."""
+    called = False
 
-    assert "adjudicate" not in captured
+    def _fail_if_called(**kwargs):
+        nonlocal called
+        called = True
 
-
-def test_bench_rejects_an_authoritative_adjudicate_flag(monkeypatch) -> None:
+    monkeypatch.setenv("ENGINE_DB_PATH", str(tmp_path / "cli.db"))
+    monkeypatch.setattr("engine.eval.runner.run_benchmark", _fail_if_called)
     monkeypatch.setattr(sys, "argv", ["engine", "bench", "--adjudicate"])
 
     with pytest.raises(SystemExit) as exc:
         cli.main()
 
-    assert exc.value.code == 2  # argparse: unrecognized argument
+    assert exc.value.code == 2
+    assert "--adjudicate requires --case-id" in capsys.readouterr().err
+    assert called is False
 
 
-def test_run_benchmark_accepts_no_authoritative_adjudicate_parameter() -> None:
-    import inspect
+def test_bench_rejects_adjudicate_with_category_but_no_case_id(monkeypatch, tmp_path) -> None:
+    """--category alone is still a multi-case (category-wide) run -- not
+    narrow enough to satisfy the gate."""
+    monkeypatch.setenv("ENGINE_DB_PATH", str(tmp_path / "cli.db"))
+    monkeypatch.setattr(sys, "argv", ["engine", "bench", "--adjudicate", "--category", "edge_case"])
 
-    from engine.eval.runner import run_benchmark
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
 
-    params = inspect.signature(run_benchmark).parameters
-    assert "shadow_adjudicate" in params
-    assert "adjudicate" not in params
+    assert exc.value.code == 2
+
+
+def test_adjudicate_flag_reaches_run_benchmark_when_case_id_is_given(monkeypatch, tmp_path) -> None:
+    captured = _bench(
+        monkeypatch, tmp_path, ["--adjudicate", "--case-id", "edge_case-02-clean"]
+    )
+
+    assert captured["adjudicate"] is True
+    assert captured["case_ids"] == ["edge_case-02-clean"]
+    assert captured["shadow_adjudicate"] is False
+
+
+def test_case_id_is_repeatable_and_composes_with_category(monkeypatch, tmp_path) -> None:
+    captured = _bench(
+        monkeypatch,
+        tmp_path,
+        [
+            "--adjudicate",
+            "--case-id",
+            "edge_case-02-clean",
+            "--case-id",
+            "edge_case-02-broken",
+            "--category",
+            "edge_case",
+        ],
+    )
+
+    assert captured["case_ids"] == ["edge_case-02-clean", "edge_case-02-broken"]
+    assert captured["category"] == "edge_case"
+    assert captured["adjudicate"] is True
+
+
+def test_shadow_and_adjudicate_together_are_rejected_by_argparse(monkeypatch, tmp_path) -> None:
+    """Argparse's own mutually-exclusive group refuses the combination before
+    load_config/run_benchmark are ever reached -- not just a downstream
+    ValueError."""
+    called = False
+
+    def _fail_if_called(**kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setenv("ENGINE_DB_PATH", str(tmp_path / "cli.db"))
+    monkeypatch.setattr("engine.eval.runner.run_benchmark", _fail_if_called)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["engine", "bench", "--adjudicate", "--shadow-adjudicate", "--case-id", "edge_case-02-clean"],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 2
+    assert called is False
 
 
 def test_both_adjudication_modes_together_are_still_rejected_downstream() -> None:
-    """The mutual exclusion the CLI relies on, asserted at its source."""
+    """Second line of defense below the CLI, for any caller that is not the
+    CLI's argparse group (e.g. a direct run_benchmark/run_verification call)."""
     import inspect
 
     from engine.verification import pipeline
 
     source = inspect.getsource(pipeline.run_verification)
     assert "adjudicate and shadow_adjudicate" in source
+
+
+def test_case_id_alone_does_not_imply_adjudicate(monkeypatch, tmp_path) -> None:
+    """--case-id is a general filter, usable without --adjudicate -- it must
+    not silently turn authoritative mode on."""
+    captured = _bench(monkeypatch, tmp_path, ["--case-id", "edge_case-02-clean"])
+
+    assert captured["case_ids"] == ["edge_case-02-clean"]
+    assert captured["adjudicate"] is False
+    assert captured["shadow_adjudicate"] is False
+
+
+def test_select_cases_filters_to_exactly_the_named_case_ids() -> None:
+    from engine.eval.runner import select_cases
+
+    cases = select_cases(None, case_ids=["edge_case-02-clean", "edge_case-02-broken"])
+
+    assert sorted(c.eval_case_id for c in cases) == ["edge_case-02-broken", "edge_case-02-clean"]
+
+
+def test_select_cases_case_ids_intersects_with_category() -> None:
+    from engine.eval.runner import select_cases
+
+    # edge_case-02-clean is in category "edge_case", not "security" -- an
+    # AND filter must return nothing, never fall back to ignoring category.
+    assert select_cases("security", case_ids=["edge_case-02-clean"]) == []
 
 
 # ==========================================================================
@@ -185,6 +287,8 @@ def test_existing_bench_invocations_still_parse_and_run(monkeypatch, tmp_path, a
     captured = _bench(monkeypatch, tmp_path, argv)
 
     assert captured["shadow_adjudicate"] is False
+    assert captured["adjudicate"] is False
+    assert captured["case_ids"] is None
 
 
 def test_compare_never_touches_the_production_database(monkeypatch, tmp_path) -> None:

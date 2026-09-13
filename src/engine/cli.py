@@ -218,10 +218,27 @@ def main() -> None:
         help="Validate the dataset and budget, print the plan, make zero LLM calls",
     )
     bench_parser.add_argument(
+        "--case-id",
+        action="append",
+        default=None,
+        metavar="EVAL_CASE_ID",
+        help="Run only this eval case ID (repeatable), e.g. edge_case-02-clean. "
+        "Combines with --category as an AND filter. Required alongside --adjudicate.",
+    )
+    _adjudication_mode = bench_parser.add_mutually_exclusive_group()
+    _adjudication_mode.add_argument(
         "--shadow-adjudicate",
         action="store_true",
         help="Record admissibility adjudications alongside the run without letting "
         "them affect any verdict (observation only)",
+    )
+    _adjudication_mode.add_argument(
+        "--adjudicate",
+        action="store_true",
+        help="Make admissibility authoritative: a deterministic contradiction can "
+        "drop a defect out of the blocking set and change the verdict. Requires "
+        "--case-id -- refused on a full or category-wide run. Mutually exclusive "
+        "with --shadow-adjudicate.",
     )
     bench_parser.add_argument("--provider", default="anthropic", help="Provider to use")
 
@@ -371,9 +388,15 @@ def main() -> None:
         from engine.eval.runner import run_benchmark, select_cases
         from engine.state import db
 
+        if args.adjudicate and not args.case_id:
+            bench_parser.error(
+                "--adjudicate requires --case-id -- authoritative adjudication may "
+                "not run against a full or category-wide benchmark"
+            )
+
         config = load_config()
         judge_model = DEFAULT_MODELS[args.provider]["judge"]
-        cases = select_cases(args.category)
+        cases = select_cases(args.category, case_ids=args.case_id)
 
         if args.dry_run:
             if args.compare is not None:
@@ -386,17 +409,23 @@ def main() -> None:
             print(plan_text)
             sys.exit(1 if errors else 0)
 
-        # Verdict-neutral by construction: run_verification puts shadow records
-        # in a key verdict.gate never reads, so this flag changes what is
-        # stored, never what is decided. There is deliberately no CLI flag for
-        # the authoritative `adjudicate` mode -- the two are mutually exclusive
-        # downstream, and leaving only one reachable keeps that unambiguous.
+        # --shadow-adjudicate is verdict-neutral by construction:
+        # run_verification puts shadow records in a key verdict.gate never
+        # reads, so it changes what is stored, never what is decided.
+        # --adjudicate is the opposite: authoritative, and reachable only
+        # together with an explicit --case-id (enforced above, before any
+        # provider call), so it can never run against a full or
+        # category-wide benchmark by accident. The two flags are a single
+        # argparse mutually-exclusive group, so argparse itself refuses
+        # both at once before this line is ever reached.
         eval_run, results = run_benchmark(
             config=config,
             provider_name=args.provider,
             judge_model=judge_model,
             category=args.category,
+            case_ids=args.case_id,
             shadow_adjudicate=args.shadow_adjudicate,
+            adjudicate=args.adjudicate,
         )
         print(format_benchmark_report(eval_run, results))
 

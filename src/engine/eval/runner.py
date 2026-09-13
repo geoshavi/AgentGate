@@ -90,10 +90,18 @@ def estimate_benchmark_cost(num_cases: int, judge_model: str) -> Decimal:
     return per_call * calls
 
 
-def select_cases(category: str | None) -> list[EvalCase]:
-    if category is None:
-        return list(CASES)
-    return [c for c in CASES if c.category == category]
+def select_cases(category: str | None, case_ids: list[str] | None = None) -> list[EvalCase]:
+    """``case_ids``, when given, further restricts the category selection to
+    an explicit, caller-named list of ``eval_case_id`` values (e.g.
+    ``["edge_case-02-clean", "edge_case-02-broken"]``) -- an AND with
+    ``category``, not an alternative to it. No case ID is ever assumed or
+    defaulted here; every value must be named by the caller.
+    """
+    cases = list(CASES) if category is None else [c for c in CASES if c.category == category]
+    if case_ids is None:
+        return cases
+    wanted = set(case_ids)
+    return [c for c in cases if c.eval_case_id in wanted]
 
 
 def _write_case_files(workspace: Path, files: dict[str, str]) -> None:
@@ -172,6 +180,7 @@ def run_case(
     eval_run_id: int,
     timeout_seconds: float | None = None,
     shadow_adjudicate: bool = False,
+    adjudicate: bool = False,
 ) -> EvalCaseResult:
     # Deterministic, not random: reproducible for debugging, and unique
     # across every eval run ever (eval_run_id is a fresh autoincrement each
@@ -220,6 +229,7 @@ def run_case(
             timeout_seconds=timeout_seconds,
             on_schema_failure=_collect_schema_failure,
             shadow_adjudicate=shadow_adjudicate,
+            adjudicate=adjudicate,
         )
         actual_verdict = status
         detected_categories = sorted(
@@ -309,9 +319,18 @@ def run_benchmark(
     provider_name: str,
     judge_model: str,
     category: str | None = None,
+    case_ids: list[str] | None = None,
     shadow_adjudicate: bool = False,
+    adjudicate: bool = False,
 ) -> tuple[EvalRun, list[EvalCaseResult]]:
-    cases = select_cases(category)
+    """``adjudicate`` makes admissibility authoritative for every case this
+    call runs, instead of the observation-only ``shadow_adjudicate``. The
+    caller (``cli.py``) is responsible for refusing to combine ``adjudicate``
+    with an unrestricted ``case_ids=None`` run -- this function itself places
+    no restriction on ``case_ids`` beyond what ``select_cases`` already does,
+    so a caller other than the CLI must enforce that gate itself.
+    """
+    cases = select_cases(category, case_ids=case_ids)
     gateway = LLMGateway.from_config(provider_name, config)
     budget = BudgetController(max_tokens=BENCHMARK_MAX_TOKENS, planned_budget=BENCHMARK_PLANNED_BUDGET)
     git_commit_sha = get_git_commit_sha()
@@ -334,6 +353,7 @@ def run_benchmark(
                 run_id=run_id,
                 eval_run_id=eval_run_id,
                 shadow_adjudicate=shadow_adjudicate,
+                adjudicate=adjudicate,
             )
             eval_case_result_id = db.record_eval_case_result(conn, result)
             db.record_eval_case_defects(conn, eval_case_result_id, result.defects)
