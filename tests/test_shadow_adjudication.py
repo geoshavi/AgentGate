@@ -999,3 +999,289 @@ def test_shadow_mining_n_security_04_clean_still_receives_no_route_b_evidence(
     assert json.loads(record["evidence_json"])["minimal_trigger"] is None
     assert record["admissible_to_block"] is True
     assert status == "UNVERIFIED"
+
+
+# ==========================================================================
+# Authoritative wiring (adjudicate=True) reusing the identical mining +
+# adjudication logic the shadow path already exercises above --
+# pipeline._authoritative_defects / _with_mined_evidence, no second
+# implementation of Route A/B. The only new claim: a genuine, evidence-proven
+# out-of-contract Route A/B contradiction can now actually flip the verdict.
+# Every fixture here mirrors a shadow-mining test above so the two paths can
+# be read side by side.
+# ==========================================================================
+
+
+def test_auth_mining_a_route_a_hit_flips_verdict_to_ok(monkeypatch, tmp_path: Path) -> None:
+    """Route A: the sole HIGH blocker's trigger (user=None) is proven to
+    contradict the declared `user: dict` parameter -- the verdict flips
+    UNVERIFIED -> OK."""
+    status, merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH], adjudicate=True)
+
+    assert merged["defects"][0]["minimal_trigger"] == "user=None"
+    assert merged["defects"][0]["admissibility_rule"] == "declared-interface"
+    assert merged["defects"][0]["admissible_to_block"] is False
+    assert verdict._has_blocking(merged) is False
+    assert status == "OK"
+
+
+def test_auth_mining_b_route_b_hit_flips_verdict_to_ok(monkeypatch, tmp_path: Path) -> None:
+    """Route B: the sole HIGH blocker's required behavior (return the raw,
+    possibly-non-str value) is proven to contradict the declared
+    `-> str | None` return -- the verdict flips UNVERIFIED -> OK."""
+    status, merged, _ = _run(monkeypatch, tmp_path, [_RETURN_TYPE_HIGH], adjudicate=True)
+
+    assert merged["defects"][0]["minimal_trigger"] == "return=None"
+    assert merged["defects"][0]["admissibility_rule"] == "factual-premise"
+    assert merged["defects"][0]["admissible_to_block"] is False
+    assert verdict._has_blocking(merged) is False
+    assert status == "OK"
+
+
+def test_auth_mining_c_quality_04_broken_blocker_survives(monkeypatch, tmp_path: Path) -> None:
+    """A genuinely unrelated blocking defect (no Route A/B text shape) is
+    offered mining, finds nothing, and still blocks."""
+    defect = _defect(
+        id="C1",
+        category="CODE-QUALITY",
+        severity="HIGH",
+        location="solution.py: total > 100 (used twice)",
+        fix=(
+            "Define a module-level constant, e.g. HIGH_VALUE_THRESHOLD = 100, and replace "
+            "both literal comparisons 'total > 100' with 'total > HIGH_VALUE_THRESHOLD' as "
+            "explicitly requested by the task."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=QUALITY_04_TASK,
+        code=QUALITY_04_BROKEN,
+        adjudicate=True,
+    )
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_d_security_03_broken_sole_blocker_survives(
+    monkeypatch, tmp_path: Path
+) -> None:
+    defect = _defect(
+        category="SECURITY",
+        severity="HIGH",
+        location="solution.py: generate_reset_token",
+        fix=(
+            "random.choice over a fixed alphabet is not cryptographically secure; use "
+            "secrets.token_hex instead."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=SEC_03_TASK,
+        code=SEC_03_BROKEN,
+        adjudicate=True,
+    )
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_e_edge_case_02_broken_remains_blocked(monkeypatch, tmp_path: Path) -> None:
+    """The genuinely broken fixture -- a real missing-path KeyError -- must
+    never be rescued by this mechanism, authoritative or not."""
+    defect = _defect(
+        location='solution.py: user["profile"]["email"]',
+        fix=(
+            "Missing handling for an absent 'profile' or 'email' key: this raises "
+            "KeyError instead of returning None."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=TASK,
+        code=EDGE_02_BROKEN,
+        adjudicate=True,
+    )
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_f_security_04_broken_remains_blocked(monkeypatch, tmp_path: Path) -> None:
+    defect = _defect(
+        category="SECURITY",
+        location="solution.py: resolve_safe_fetch_target",
+        fix=(
+            "No validation of the resolved address at all; internal/private addresses "
+            "are never rejected, allowing SSRF against internal services."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=SEC_04_TASK,
+        code=SEC_04_BROKEN,
+        adjudicate=True,
+    )
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_g_security_04_clean_remains_blocked_explicitly_unsolved(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """security-04-clean is out of scope for this mechanism (registration
+    section 3) -- confirm the authoritative path gives it no rescue either."""
+    defect = _defect(
+        category="SECURITY",
+        severity="CRITICAL",
+        location="solution.py: resolve_safe_fetch_target return addresses[0]",
+        fix=(
+            "The function validates ALL resolved addresses are public but then returns "
+            "addresses[0], the first address from getaddrinfo, not necessarily the one "
+            "that was validated in a TOCTOU/DNS-rebinding sense."
+        ),
+    )
+
+    status, merged, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [defect],
+        task=SEC_04_TASK,
+        code=SEC_04_CLEAN,
+        adjudicate=True,
+    )
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_h_no_hit_defect_stays_fail_closed_unresolved(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A defect matching neither route stays fail-closed-unresolved -- still
+    blocking, still fully authoritative -- exactly as before this wiring."""
+    defect = _defect(fix="This code has a subtle logic error under load.")
+
+    status, merged, _ = _run(monkeypatch, tmp_path, [defect], adjudicate=True)
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert merged["defects"][0]["admissibility_rule"] == "fail-closed-unresolved"
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_i_ambiguous_dual_match_fails_closed_and_still_blocks(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A defect matching both routes at once must never be authoritatively
+    suppressed -- the same fail-closed ambiguity rule the shadow path
+    enforces."""
+    dual_match_defect = _defect(
+        fix=(
+            "Guard against user not being a dict (e.g., None) and also return "
+            "the email value regardless of its type instead of filtering it "
+            "to None."
+        ),
+    )
+
+    status, merged, _ = _run(monkeypatch, tmp_path, [dual_match_defect], adjudicate=True)
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert merged["defects"][0]["admissibility_rule"] == "fail-closed-unresolved"
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_j_judge_supplied_evidence_still_takes_precedence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Frozen precedence holds under authoritative adjudication too: judge-
+    supplied evidence is never overwritten by either miner, even when the
+    defect's own free text would otherwise match Route A."""
+    defect = _defect(
+        minimal_trigger="user={}",  # judge-supplied, in-contract -- not what either miner would pick
+        fix=_MINED_HIGH["fix"],  # text that would otherwise match Route A
+    )
+
+    evidence, source = pipeline._select_mined_evidence(defect, TASK, CLEAN)
+    assert evidence == {}
+    assert source == "judge-supplied"
+
+    status, merged, _ = _run(monkeypatch, tmp_path, [defect], adjudicate=True)
+
+    # the judge-supplied value survives untouched -- neither miner overwrote it
+    assert merged["defects"][0]["minimal_trigger"] == "user={}"
+    # an in-contract witness is not a contradiction, so it still blocks
+    assert merged["defects"][0]["admissible_to_block"] is True
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_k_authoritative_and_shadow_agree_on_the_same_defect(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Both paths call the identical mining + adjudication logic. The shadow
+    record's conclusion for a Route A hit and the authoritative annotation's
+    conclusion for the same defect must agree exactly, proving there is no
+    second implementation of Route A/B -- only authoritative mode can change
+    the actual verdict."""
+    shadow_status, shadow_merged, _ = _run(
+        monkeypatch, tmp_path, [_MINED_HIGH], shadow_adjudicate=True
+    )
+    auth_status, auth_merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH], adjudicate=True)
+
+    shadow_record = shadow_merged["shadow_adjudications"][0]
+    assert shadow_record["rule"] == auth_merged["defects"][0]["admissibility_rule"] == (
+        "declared-interface"
+    )
+    assert (
+        shadow_record["admissible_to_block"]
+        == auth_merged["defects"][0]["admissible_to_block"]
+        is False
+    )
+    assert shadow_status == "UNVERIFIED"
+    assert auth_status == "OK"
+
+
+def test_auth_mining_l_default_path_unaffected_by_this_wiring(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Neither flag set: behavior is byte-identical to before this wiring --
+    no mining, no admissibility keys, defects untouched."""
+    status, merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH])
+
+    assert merged["defects"] == [_MINED_HIGH]
+    assert "admissible_to_block" not in merged["defects"][0]
+    assert "shadow_adjudications" not in merged
+    assert status == "UNVERIFIED"
+
+
+def test_auth_mining_m_shadow_path_unaffected_by_this_wiring(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """shadow_adjudicate=True is untouched by this change: the original
+    defect is still never mutated, and the actual verdict still blocks."""
+    status, merged, _ = _run(monkeypatch, tmp_path, [_MINED_HIGH], shadow_adjudicate=True)
+
+    assert "minimal_trigger" not in merged["defects"][0]
+    assert "admissible_to_block" not in merged["defects"][0]
+    record = merged["shadow_adjudications"][0]
+    assert json.loads(record["evidence_json"])["minimal_trigger"] == "user=None"
+    assert status == "UNVERIFIED"

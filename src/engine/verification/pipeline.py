@@ -51,11 +51,17 @@ def run_verification(
     ``adjudicate`` is off by default and no caller passes it yet. When off,
     ``merged`` carries no admissibility keys and ``verdict.gate`` behaves
     exactly as it did before the adjudication layer existed. When on, each
-    blocking defect is annotated with ``admissible_to_block``; a deterministic
-    contradiction can drop one out of the blocking set, but nothing is removed
-    from ``merged["defects"]``, so reporting and retry feedback are unchanged.
-    Note the ordering: schema errors and automated-gate failures are still
-    evaluated first inside ``gate``, so neither can be rescued by admissibility.
+    defect is first offered the same mined evidence the shadow path computes
+    (see ``_authoritative_defects`` / ``_with_mined_evidence`` -- identical
+    precedence, identical fail-closed-on-ambiguity rule, no second
+    implementation of Route A/B), then annotated with
+    ``admissible_to_block``; a deterministic contradiction can drop one out
+    of the blocking set. Nothing is removed from ``merged["defects"]`` --
+    only evidence keys (e.g. ``minimal_trigger``) are added to entries where
+    mining found something -- so reporting and retry feedback still show
+    every defect. Note the ordering: schema errors and automated-gate
+    failures are still evaluated first inside ``gate``, so neither can be
+    rescued by admissibility.
 
     ``shadow_adjudicate`` is the *observation-only* counterpart, and is a
     deliberately separate flag rather than a mode of ``adjudicate``. It computes
@@ -111,6 +117,10 @@ def run_verification(
     if schema_errors:
         merged = {**merged, "schema_errors": schema_errors}
     if adjudicate:
+        merged = {
+            **merged,
+            "defects": _authoritative_defects(merged, task_text, code_snapshot),
+        }
         merged = admissibility.annotate(merged, task_text, code_snapshot)
     elif shadow_adjudicate:
         merged = {
@@ -190,15 +200,40 @@ def _select_mined_evidence(
 
 
 def _with_mined_evidence(defect: dict, task_text: str, code_snapshot: str) -> dict:
-    """A shadow-only copy of ``defect``, augmented with evidence selected by
+    """A copy of ``defect``, augmented with evidence selected by
     ``_select_mined_evidence``'s frozen precedence.
 
-    Never mutates ``defect``. The original -- not this copy -- is what
-    ``merged["defects"]`` continues to hold and what the actual verdict path
-    reads; this copy exists only for the one sidecar record built from it.
+    Never mutates ``defect``. Used by both the shadow path (building a
+    throwaway copy for one sidecar record) and the authoritative path
+    (building the actual defect that reaches ``admissibility.annotate``) --
+    the mining and precedence logic is identical either way; only what the
+    caller does with the result differs.
     """
     evidence, _source = _select_mined_evidence(defect, task_text, code_snapshot)
     return {**defect, **evidence} if evidence else defect
+
+
+def _authoritative_defects(merged: dict, task_text: str, code_snapshot: str) -> list:
+    """The real defect list ``admissibility.annotate`` should adjudicate,
+    each entry offered the same mined evidence the shadow path computes.
+
+    Mirrors ``_shadow_adjudications``'s iteration exactly, but the result
+    replaces ``merged["defects"]`` instead of feeding a sidecar -- this is
+    what makes adjudication authoritative rather than observational. A
+    defect mining fails to augment (any exception) is passed through
+    unmodified rather than dropped: unlike shadow bookkeeping, this list
+    still has to reach ``verdict.gate`` complete.
+    """
+    defects = []
+    for defect in merged.get("defects", []) or []:
+        if not isinstance(defect, dict):
+            defects.append(defect)
+            continue
+        try:
+            defects.append(_with_mined_evidence(defect, task_text, code_snapshot))
+        except Exception:  # noqa: BLE001 -- mining must never drop a real defect
+            defects.append(defect)
+    return defects
 
 
 def _shadow_record(defect: dict, task_text: str, code_snapshot: str) -> dict | None:
