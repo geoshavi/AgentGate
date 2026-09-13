@@ -604,13 +604,119 @@ not an open verifier target.
   `security-03-broken`, `quality-04-broken`, and `edge_case-02-broken` are structurally
   unrelated (no address classification involved) and untouched by this entry.
 
+## edge_case-02-clean — Combined Contract Evidence Mining, targeted authoritative validation (Run 66, live-validated)
+
+Closes the live-validation pre-registration opened in
+`docs/benchmark/COMBINED_CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION_ADDENDUM_03.md` §3,
+governed by that addendum's frozen SUCCESS/REJECT/INCONCLUSIVE criteria (§3.4-§3.6) and
+execution policy (§3.3). Nothing here reopens or edits the base registration
+(`COMBINED_CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md`) or either earlier addendum.
+
+**Run 66.**
+
+| run | date | commit sha | dataset_version | scope | provider/model | accuracy | false_pass | false_unverified | schema failures | cost |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 66 | 2026-09-13 | 5524f1c | v6 | **`--case-id`-targeted, 5 cases — NOT the 40-case benchmark; excluded from every accuracy/variance/stability pool** | anthropic / claude-sonnet-5 | 5/5 (100%, non-comparable denominator) | 0 | 0 | 0 | $0.096960 |
+
+Integrity, read from a scratchpad copy of `.engine/state.db` (never the live file): 0
+`eval_case_results.error` rows, 15/15 `eval_case_lens_results.call_status = ok` (5 cases x 3
+lenses), 15/15 `eval_case_automated_gates.passed = 1`, 0 `eval_case_schema_failures` rows.
+`runs` row 75 (`eval:engine-review-benchmark`) shows `status = 'passed'`, `attempts = 5`,
+`finished_at` set — **the process completed and committed normally; it did not crash
+mid-run.** Per-case cost (security-03-broken \$0.015692, security-04-broken \$0.037372,
+quality-04-broken \$0.016980, edge_case-02-broken \$0.010588, edge_case-02-clean
+\$0.016328) sums exactly to \$0.096960.
+
+**Target — `edge_case-02-clean`.** A live HIGH `correctness` defect was recorded
+(`eval_case_defects`, `eval_case_result_id` 2500, `defect_id` C1): location
+`solution.py:2 - user.get("profile")`, fix text describing "a non-dict `user` (e.g., None)
+currently causes an AttributeError" — the same claim family recorded in prior historical
+runs of this case. Final `actual_verdict` = **OK** (matches `expected_verdict`). This
+defect and this verdict are read directly from `.engine/state.db` — measured, not
+reconstructed.
+
+**Controls — all four retained their blocker, unsuppressed** (`eval_case_results`, run 66,
+read directly from the DB): `edge_case-02-broken` UNVERIFIED, `quality-04-broken`
+UNVERIFIED, `security-03-broken` UNVERIFIED, `security-04-broken` UNVERIFIED — every one
+matching its `expected_verdict`. `false_pass = 0` run-wide.
+
+**Forensic disclosure — how the admissibility decision was established.**
+`eval_case_defect_adjudications` (the sidecar table carrying `admissible_to_block`/`rule`/
+`reason`) has **zero rows for run 66**, and this is not incidental to this run:
+`pipeline.run_verification`'s `if adjudicate: ... elif shadow_adjudicate: ...` branch
+(`src/engine/verification/pipeline.py:119-129`) only ever builds the `shadow_adjudications`
+list — the thing `db.record_defect_adjudications` writes — inside the `shadow_adjudicate`
+arm. Run 66 used `--adjudicate` (authoritative), not `--shadow-adjudicate`, so this table
+structurally receives no rows from it regardless of outcome; `merged["defects"]` was
+annotated in-process instead, and that annotation is not among the fixed columns
+`record_eval_case_defects` writes to `eval_case_defects`. The pre-registration's own §3.8
+anticipated exactly this: these two fields exist only on the in-process result / printed
+report for that invocation's lifetime, and once the process exits they are "not recoverable
+from `.engine/state.db` alone." That live-output capture was not preserved for run 66.
+
+**What was done instead, this turn: independent deterministic reconstruction, verified,
+not merely asserted.** Using only durable, unmodified inputs — the defect's `location`/
+`fix` text as persisted in `eval_case_defects` (above), the `edge_case-02-clean`
+clean-fixture source from `src/engine/eval/dataset.py` (byte-identical at HEAD, which this
+turn verified clean and equal to run 66's stamped SHA `5524f1c` before touching anything),
+and the real, unmodified `engine.verification.evidence_mining` /
+`engine.verification.admissibility` functions at that same commit — this turn recomputed
+the mining and adjudication steps directly, in a throwaway scratch script (no provider
+call, no benchmark run, no DB write):
+- `_with_mined_evidence` on the C1 defect mines `minimal_trigger = "user=None"` via Route A
+  (`mine_trigger_evidence`; the function's own `user: dict` annotation contradicts a `None`
+  witness). Route B (`mine_return_value_evidence`) returns no evidence on the same defect
+  text — no dual match.
+- `admissibility.decide` on the mined defect returns `admissible=False`,
+  `rule="declared-interface"`, `reason="user is annotated ['dict'], witness is NoneType"`.
+- The same two mining functions were run against all 16 defects recorded on the four
+  controls (their real `location`/`fix` text and real broken-fixture code): **zero Route
+  A/B hits on any control** — evidence was never mined, so admissibility was never even in
+  scope for any control defect.
+
+These values agree exactly with the values reported in the original request for this
+entry. This is **post-run deterministic reconstruction, independently reproduced and
+verified this turn — not a direct persisted/live capture.** It is the strongest available
+substitute for the missing live capture, not a claim of equivalence to it: a future
+invocation of this pre-registration must still capture `admissible_to_block`/`rule`/
+`reason` from that invocation's own immediate output before the process exits, per §3.8,
+rather than relying on after-the-fact recomputation.
+
+**Classification: SUCCESS**, per `ADDENDUM_03` §3.4 — all six criteria hold: (1) a live
+HIGH defect with a mined `minimal_trigger` on the target, (2) `admissible_to_block =
+False`, (3) rule/reason from the existing, unmodified `declared-interface` path (no new
+rule name, no new reasoning path), (4) target's final verdict = OK, (5) all four controls
+retained a legitimate blocker, (6) `false_pass = 0`. No §3.5 REJECT condition was
+observed — specifically verified this turn for the dual-match and control-suppression
+conditions, not merely assumed absent.
+
+**Licensed claim (§3.7, quoted verbatim):**
+> "Authoritative contract-evidence adjudication was live-validated for a real Route A/B
+> false blocker with no observed control suppression."
+
+**Claim limits — binding, not relaxed by this entry:**
+- `edge_case-02-clean` is **not** fully fixed. Its historical coverage remains 5 of 6 known
+  `UNVERIFIED` v6 runs, not 6 of 6.
+- **Run 56 remains unexplained by either route** and stays that way regardless of this
+  run's outcome (run 56 is the VOID, credit-exhausted run recorded above — a separate
+  historical case this experiment does not touch or resolve).
+- No claim is made about authoritative adjudication for any case beyond this named target
+  and its four controls, and no claim of general rollout safety is made.
+- `security-04-clean` is untouched and out of scope; nothing here bears on it.
+
+**Execution decision.** Per `ADDENDUM_03` §3.3, N=4 was a ceiling, not a mandatory count,
+and the policy requires stopping immediately on the first SUCCESS. Run 66 satisfied SUCCESS
+on invocation 1. **Live Runs 2-4 were therefore not executed and are not needed.** This
+targeted `edge_case-02-clean` live-validation experiment is now frozen; re-opening it
+requires a new, separate pre-registration.
+
 ### Verifier target status (the four cases named in the v4/v5 boundary note, above)
 
 | case | status |
 |---|---|
 | `correctness-02-clean` | **Fixed** — dataset v5, amendment A-4 (float-subtraction boundary repair) |
 | `security-02-clean` | **Fixed** — dataset v5, amendment A-5 (converter argument-injection repair) |
-| `edge_case-02-clean` | **Remaining active verifier-side target.** Addressed partially and non-authoritatively by the Contract Evidence Mining shadow prototype (`docs/benchmark/CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION.md` and its Addendum 01): offline replay found the mechanism would resolve 2 of its 6 historical v6 `UNVERIFIED` runs; no full-fix claim is made, and no authoritative wiring exists. |
+| `edge_case-02-clean` | **LIVE-VALIDATED FOR KNOWN ROUTE A/B FALSE-BLOCKER SUPPRESSION. NOT FULLY FIXED — RUN 56 REMAINS UNEXPLAINED.** Supersedes the earlier "shadow prototype, non-authoritative" status: Run 66 (see `edge_case-02-clean — Combined Contract Evidence Mining` section, above) live-validated authoritative suppression of a real Route A false blocker (`declared-interface`) with zero observed control suppression, per `ADDENDUM_03`'s pre-registered criteria. Historical coverage remains 5/6 known `UNVERIFIED` v6 runs; no full-fix claim is made. |
 | `security-04-clean` | **Reclassified, this entry.** Not a verifier defect — a v6 dataset/spec-precision limitation. Deferred to a future dataset revision (v7); no verifier-side fix is safe to pursue at v6. |
 
 ## Notes
