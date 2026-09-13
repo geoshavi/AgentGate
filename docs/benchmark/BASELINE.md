@@ -695,11 +695,25 @@ conditions, not merely assumed absent.
 > false blocker with no observed control suppression."
 
 **Claim limits — binding, not relaxed by this entry:**
-- `edge_case-02-clean` is **not** fully fixed. Its historical coverage remains 5 of 6 known
-  `UNVERIFIED` v6 runs, not 6 of 6.
-- **Run 56 remains unexplained by either route** and stays that way regardless of this
-  run's outcome (run 56 is the VOID, credit-exhausted run recorded above — a separate
-  historical case this experiment does not touch or resolve).
+- `edge_case-02-clean` is **not** fully fixed. Known historical false-blocker families are
+  covered by Route A/B; no claim is made that every possible future judge phrasing is
+  covered.
+- **Post-result clarification (superseding this entry's own earlier "Run 56 remains
+  unexplained by either route" wording, which read as though a real defect resisted
+  explanation):** row-level durable evidence — `eval_case_results` id 2169,
+  `eval_case_lens_results`, `eval_case_defects`, `eval_case_automated_gates`,
+  `eval_case_schema_failures`, `eval_case_defect_adjudications`, all queried from a
+  scratchpad copy of `.engine/state.db` — shows **Run 56 is a VOID credit-exhaustion
+  artifact: the `correctness` lens failed with an Anthropic `BadRequestError` (credit
+  balance too low) before producing any judge output, `security`/`code-quality` never ran,
+  and zero defect/gate/schema/adjudication rows exist for this case in this run. No defect
+  text ever existed to classify, so Route A/B replay does not apply. It is not evidence of
+  an unresolved verifier failure**, and this experiment does not need to explain it as one.
+  (`docs/benchmark/COMBINED_CONTRACT_EVIDENCE_MINING_SHADOW_REGISTRATION_ADDENDUM_03.md`
+  §3.7's original "Run 56 remains unexplained by either route" wording was written before
+  this row-level audit and is left unedited there as historical pre-registration text —
+  this bullet is the post-result clarification that supersedes it for current-status
+  purposes.)
 - No claim is made about authoritative adjudication for any case beyond this named target
   and its four controls, and no claim of general rollout safety is made.
 - `security-04-clean` is untouched and out of scope; nothing here bears on it.
@@ -716,7 +730,7 @@ requires a new, separate pre-registration.
 |---|---|
 | `correctness-02-clean` | **Fixed** — dataset v5, amendment A-4 (float-subtraction boundary repair) |
 | `security-02-clean` | **Fixed** — dataset v5, amendment A-5 (converter argument-injection repair) |
-| `edge_case-02-clean` | **LIVE-VALIDATED FOR KNOWN ROUTE A/B FALSE-BLOCKER SUPPRESSION. NOT FULLY FIXED — RUN 56 REMAINS UNEXPLAINED.** Supersedes the earlier "shadow prototype, non-authoritative" status: Run 66 (see `edge_case-02-clean — Combined Contract Evidence Mining` section, above) live-validated authoritative suppression of a real Route A false blocker (`declared-interface`) with zero observed control suppression, per `ADDENDUM_03`'s pre-registered criteria. Historical coverage remains 5/6 known `UNVERIFIED` v6 runs; no full-fix claim is made. |
+| `edge_case-02-clean` | **LIVE-VALIDATED FOR KNOWN ROUTE A/B FALSE-BLOCKER SUPPRESSION.** Known historical false-blocker families are covered by Route A/B; Run 56 is excluded as a VOID provider-credit artifact, not an unresolved verifier failure (see the post-result clarification in the section above). Supersedes both the earlier "shadow prototype, non-authoritative" status and this entry's own earlier "Run 56 remains unexplained" wording. Run 66 live-validated authoritative suppression of a real Route A false blocker (`declared-interface`) with zero observed control suppression, per `ADDENDUM_03`'s pre-registered criteria. Not a claim of general rollout safety, not a claim that `security-04-clean` is resolved, and not a claim that every possible future judge phrasing is covered. |
 | `security-04-clean` | **Reclassified, this entry.** Not a verifier defect — a v6 dataset/spec-precision limitation. Deferred to a future dataset revision (v7); no verifier-side fix is safe to pursue at v6. |
 
 ## Notes
