@@ -733,6 +733,71 @@ requires a new, separate pre-registration.
 | `edge_case-02-clean` | **LIVE-VALIDATED FOR KNOWN ROUTE A/B FALSE-BLOCKER SUPPRESSION.** Known historical false-blocker families are covered by Route A/B; Run 56 is excluded as a VOID provider-credit artifact, not an unresolved verifier failure (see the post-result clarification in the section above). Supersedes both the earlier "shadow prototype, non-authoritative" status and this entry's own earlier "Run 56 remains unexplained" wording. Run 66 live-validated authoritative suppression of a real Route A false blocker (`declared-interface`) with zero observed control suppression, per `ADDENDUM_03`'s pre-registered criteria. Not a claim of general rollout safety, not a claim that `security-04-clean` is resolved, and not a claim that every possible future judge phrasing is covered. |
 | `security-04-clean` | **Reclassified, this entry.** Not a verifier defect — a v6 dataset/spec-precision limitation. Deferred to a future dataset revision (v7); no verifier-side fix is safe to pursue at v6. |
 
+## Run 67 — final closure validation for the four original historical clean cases
+
+**Run 67.** `--case-id`-targeted, 4 cases — **NOT the 40-case benchmark; excluded from
+every accuracy/variance/stability pool, exactly like Run 45 and Run 66.** Stamped SHA
+`7b59c9eabba72df060ddd888eb156dcb20b14614`, anthropic/claude-sonnet-5, dataset v6.
+`total_cases=4`, `correct_verdicts=3` (3/4), `false_pass=0`, `false_unverified=1`, cost
+`$0.140214`. Read directly from `.engine/state.db` (`eval_runs` id 67). 1 schema failure
+(`security-04-clean` × `correctness`, a verdict-consistency failure — an already-documented
+class for this case — not incorrectly rescued). 12/12 lens calls `ok`, 12/12 automated
+gates passed, 0 error rows. **Closure validation: PASS** — no hard-failure condition
+(false_pass, a genuine regression on the two fixed cases, a Route A/B false blocker
+remaining blocking, a suppressed legitimate defect, a genuinely new `security-04-clean`
+defect, or an incorrectly-rescued schema/gate failure) was observed.
+
+**1. `correctness-02-clean`** — expected OK, actual **OK**. No HIGH/CRITICAL defects (one
+LOW code-quality note only). **CLOSED / FIXED** — dataset v5 amendment A-4.
+
+**2. `security-02-clean`** — expected OK, actual **OK**. Zero defects recorded at all.
+**CLOSED / FIXED** — dataset/spec amendments v5/v6.
+
+**3. `edge_case-02-clean`** — expected OK, actual **OK**. No HIGH/CRITICAL defects this
+run — two LOW findings only, so Route A/B authoritative suppression was **not exercised**
+in Run 67 (the mechanism had nothing to act on). Run 66 remains the live
+authoritative-suppression evidence; Run 56 remains classified as a VOID provider-credit
+artifact, not an unresolved verifier defect (see the section above). **CLOSED / RESOLVED
+FOR KNOWN HISTORICAL FALSE-BLOCKER FAMILIES** — authoritative contract-evidence
+adjudication was live-validated in Run 66; Run 67 is consistent closure evidence, not
+independent re-validation of the suppression mechanism itself. Not a claim of universal
+future judge-phrasing coverage.
+
+**4. `security-04-clean`** — expected OK, actual **UNVERIFIED**. Two HIGH `security`
+findings (C1: `getaddrinfo` return-selection/ordering framing; C2: DNS-rebinding framing
+excluded by the task's own explicit guarantee) both map to already-adjudicated v6 buckets
+from the frozen classification, above — re-verified this run by independently running the
+real Route A/B miners against their exact persisted text: neither mines any evidence, so
+both remain `admissible=True` / `fail-closed-unresolved`, consistent with "no verifier-side
+mechanism has safe material yield on this case." The MEDIUM CGNAT (`100.64.0.0/10`) concern
+(C3) **remains visible and unsuppressed** — it was never a candidate for suppression, since
+admissibility only ever evaluates HIGH/CRITICAL severity. One known verdict-consistency
+schema failure occurred and was not rescued. No genuinely new verifier-side defect
+appeared. **CLOSED BY ADJUDICATION — v6 DATASET/SPEC-PRECISION LIMITATION**; deferred to a
+future v7 dataset revision only if independently justified. Not FIXED, and the CGNAT
+concern is not erased or suppressed by this closure.
+
+### Four-case closure table
+
+| case | closure status |
+|---|---|
+| `correctness-02-clean` | **CLOSED / FIXED** |
+| `security-02-clean` | **CLOSED / FIXED** |
+| `edge_case-02-clean` | **CLOSED / RESOLVED FOR KNOWN HISTORICAL FALSE-BLOCKER FAMILIES** |
+| `security-04-clean` | **CLOSED BY ADJUDICATION / v6 DATASET-SPEC LIMITATION** |
+
+**All four original historical clean cases are now closed under bounded, evidence-backed
+resolution classes — they are not all "fixed" in the same sense**: two were genuinely
+repaired at the dataset level, one was live-validated against a specific, named
+false-blocker mechanism (not a claim of universal coverage), and one was closed as an
+adjudicated dataset/spec limitation, not a verifier fix, with its one live factual concern
+(CGNAT) left deliberately visible rather than suppressed. **No further random or targeted
+paid validation is required for this historical four-case closure. Runs 68+ are not needed
+for it.** Reopening any of the four requires new, independent evidence — a freshly observed
+case-specific failure, not a re-read of the runs already recorded here. Every historical
+run record and prior pre-registration document (including `ADDENDUM_03`'s own frozen §3.7
+wording) remains append-only and is not rewritten by this entry.
+
 ## Notes
 
 - Runs 6-9 were executed on an identical commit (942f509) and show a spread of 29-32/40 correct verdicts (72.5%-80.0%), i.e. a ±3/40 noise floor. Single-run deltas smaller than this are not interpretable as real changes.
