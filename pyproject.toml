@@ -2,14 +2,41 @@
 name = "engine"
 version = "0.1.0"
 description = "AI agent orchestration engine: orchestrator -> sub-agents -> multi-layer verification"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Vako Shavdatuashvili" },
+]
 requires-python = ">=3.11"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+]
 dependencies = [
-  "anthropic>=0.40.0",
+  # anthropic>=1.0.0 removed `temperature` from Messages.create entirely --
+  # not a typing change, a runtime one (verified: absent from
+  # inspect.signature and from the installed package's source at 1.5.0).
+  # `temperature` is a required, contract-level parameter of the `Provider`
+  # Protocol (providers/base.py) that every provider implementation and the
+  # gateway thread through for deterministic sampling; there is no 1.x
+  # replacement to preserve that behavior with. Capped below the major
+  # version that dropped it rather than changing what this engine asks for.
+  "anthropic>=0.40.0,<1.0.0",
   "python-dotenv>=1.0.1",
   "pydantic>=2.9.0",
+  # Agent Skills front matter is YAML by specification. Parsed with
+  # yaml.safe_load only -- never load/unsafe_load/full_load, and no custom
+  # constructor -- behind a size cap and a structural anchor/alias refusal.
+  # A hand-rolled reader was rejected: it would refuse valid skills that use
+  # folded scalars, which a 1024-char description makes routine.
+  "pyyaml>=6.0",
   "ruff>=0.7.0",
   "mypy>=1.13.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/geoshavi/AgentGate"
 
 [project.scripts]
 engine = "engine.cli:main"
@@ -18,6 +45,9 @@ engine = "engine.cli:main"
 dev = [
   "pytest>=8.3.0",
   "pytest-mock>=3.14.0",
+  # Stubs for the runtime pyyaml dependency, so mypy keeps checking the one
+  # module that parses untrusted input instead of silently skipping it.
+  "types-PyYAML>=6.0",
 ]
 
 [build-system]
@@ -27,12 +57,35 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# First-party Agent Skills ship with the engine. They live inside the package
+# rather than at the repository root so one location serves both a source
+# checkout and an installed wheel: a repo-root directory would need a packaged
+# copy beside it, and two copies of authored instruction text is a drift problem
+# nobody notices until an installed agent behaves differently from a developed
+# one. Located at runtime through importlib.resources -- see
+# capabilities/skills/roots.py:builtin_skill_root.
+[tool.setuptools.package-data]
+"engine.skill_library" = ["**/*.md"]
+# The first-party Semgrep ruleset, shipped for the same reason and located the
+# same way -- see capabilities/analysis/rules.py:builtin_ruleset. Local YAML is
+# what keeps a scan free of any Semgrep registry fetch.
+"engine.rule_library" = ["**/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# Preserved as the byte-identical executed original that produced
+# experiments/answer_budget/phase1b_batch.jsonl (see
+# docs/benchmark/ANSWER_BUDGET_PHASE1B_RESULT.md section 5) -- editing it to
+# satisfy a rule enabled after it ran would break that provenance guarantee.
+# RUF100 fires because the repo's enabled rule set no longer includes E402,
+# making the file's own `# noqa: E402` suppressions themselves the lint hit.
+"experiments/answer_budget/phase1b_batch.py" = ["RUF100"]
 
 [tool.mypy]
 # Scope is src/ only, matching every prior phase's reported baseline (46

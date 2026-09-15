@@ -1,0 +1,69 @@
+# AgentGate's first-party Semgrep ruleset.
+#
+# Deliberately small and high-confidence. This is advisory evidence handed to an
+# agent mid-session, not a gate: a noisy rule costs the agent a turn and buys
+# nothing, and nothing downstream is obliged to act on a finding. Every rule here
+# flags a construct that is wrong on its face rather than one that is merely
+# suspicious in context.
+#
+# Local YAML only, by design -- see engine/rule_library/__init__.py. Registry
+# entries like `p/default` would make an analysis run a network call.
+rules:
+  - id: agentgate.python.subprocess-shell-true
+    message: >-
+      subprocess is invoked with shell=True, so any interpolated value is parsed
+      as shell syntax. Pass a structured argv list and leave shell=False.
+    languages: [python]
+    severity: ERROR
+    pattern-either:
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+      - pattern: subprocess.check_call(..., shell=True, ...)
+      - pattern: subprocess.check_output(..., shell=True, ...)
+
+  - id: agentgate.python.dangerous-eval-exec
+    message: >-
+      eval/exec runs arbitrary code. If the argument can be influenced by input,
+      this is remote code execution; prefer an explicit parser or a lookup table.
+    languages: [python]
+    severity: ERROR
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+
+  - id: agentgate.python.unsafe-yaml-load
+    message: >-
+      This YAML loader constructs arbitrary Python objects and can execute code
+      while parsing. Use yaml.safe_load, or Loader=yaml.SafeLoader.
+    languages: [python]
+    severity: ERROR
+    pattern-either:
+      - pattern: yaml.unsafe_load(...)
+      - pattern: yaml.full_load(...)
+      - pattern: yaml.load($X)
+      - pattern: yaml.load($X, Loader=yaml.Loader)
+      - pattern: yaml.load($X, Loader=yaml.UnsafeLoader)
+      - pattern: yaml.load($X, Loader=yaml.FullLoader)
+
+  - id: agentgate.python.unsafe-deserialization
+    message: >-
+      pickle and marshal execute code while deserializing. Never load data from
+      an untrusted source this way; prefer json or another data-only format.
+    languages: [python]
+    severity: WARNING
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+      - pattern: marshal.load(...)
+      - pattern: marshal.loads(...)
+
+  - id: agentgate.python.insecure-hash
+    message: >-
+      MD5 and SHA-1 are broken for security use. Fine for a non-security digest;
+      use sha256 for anything that must resist tampering.
+    languages: [python]
+    severity: INFO
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)

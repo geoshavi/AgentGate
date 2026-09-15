@@ -59,6 +59,15 @@ class AgentExecutionMetric:
     actual_spend: Decimal | None  # None iff status == "error" before any usage was returned
     status: str  # "ok" | "error"
     error: str | None = None
+    # Phase 9C.2 observability. Purely descriptive: nothing reads these back to
+    # make a decision, and no verdict path consults them (see the inertness
+    # tests in tests/test_verification.py). stop_reason is NULL when the
+    # provider did not report one. text_chars is the length of the visible
+    # response, which separates "produced no answer" from "produced a short
+    # one" -- both look identical in output_tokens once thinking is included.
+    stop_reason: str | None = None
+    thinking_tokens: int = 0
+    text_chars: int = 0
 
 
 @dataclass
@@ -172,3 +181,9 @@ class EvalCaseResult:
     lens_results: list[EvalCaseLensResult] = field(default_factory=list)
     automated_gate_results: list[VerificationResult] = field(default_factory=list)
     schema_failures: list[EvalCaseSchemaFailure] = field(default_factory=list)
+    # Sidecar adjudication records, populated only when run_case was given
+    # shadow_adjudicate=True. Carried here for the same reason as `defects`:
+    # run_benchmark() needs the eval_case_result_id before it can write them,
+    # and that id does not exist until record_eval_case_result() has run. Empty
+    # by default, so every existing caller is unaffected.
+    shadow_adjudications: list[dict] = field(default_factory=list)

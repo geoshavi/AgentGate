@@ -36,14 +36,18 @@ def test_estimate_cost_raises_for_unknown_model() -> None:
 
 
 def test_price_table_not_stale() -> None:
-    # Sonnet 5 intro pricing ($2/$10) ends 2026-08-31.
-    # This test fails on 2026-09-01 to force an update.
+    # Reverified 2026-09-01 against platform.claude.com/docs/en/about-claude/pricing:
+    # Sonnet 5's scheduled 2026-09-01 increase to $3/$15 was cancelled, $2/$10
+    # is now the permanent rate, and Haiku 4.5 rates are unchanged -- PRICE_TABLE
+    # needed no edits. No further scheduled change is known, so this is now a
+    # periodic recheck rather than a trigger tied to a specific date; push the
+    # cutoff out three months and re-verify against the pricing page then.
     # UTC, not date.today() -- ruff (DTZ011) flags date.today() because it's
     # implicit-local-timezone, which could flip this test's verdict a day
     # early or late depending on the machine running it.
     today = datetime.now(tz=UTC).date()
-    assert today < date(2026, 9, 1), (
-        "PRICE_TABLE may be stale — verify Sonnet 5 rates at "
+    assert today < date(2026, 12, 1), (
+        "PRICE_TABLE may be stale — verify Sonnet 5 and Haiku 4.5 rates at "
         "platform.claude.com/docs/en/about-claude/pricing"
     )
 

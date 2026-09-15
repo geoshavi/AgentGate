@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS agent_execution_metrics (
     actual_spend TEXT,
     status TEXT NOT NULL,
     error TEXT,
+    stop_reason TEXT,
+    thinking_tokens INTEGER NOT NULL DEFAULT 0,
+    text_chars INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -129,6 +132,32 @@ CREATE TABLE IF NOT EXISTS eval_case_defects (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_eval_case_defects_result ON eval_case_defects(eval_case_result_id);
+
+-- Adjudication sidecar. Purely additive: eval_case_defects above is never
+-- written or altered by this, so the original judge defect and its original
+-- severity survive byte-for-byte whatever the adjudicator concluded. One row
+-- per adjudicated defect. admissible_to_block is NULL for a defect that was
+-- never in scope (severity below blocking), 0/1 otherwise.
+CREATE TABLE IF NOT EXISTS eval_case_defect_adjudications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    eval_case_result_id INTEGER NOT NULL REFERENCES eval_case_results(id),
+    lens TEXT NOT NULL,
+    defect_id TEXT NOT NULL,
+    original_severity TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    adjudication_json TEXT NOT NULL,
+    admissible_to_block INTEGER,
+    rule TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    probe_predicate TEXT,
+    probe_argument TEXT,
+    probe_result TEXT,
+    probe_interpreter_version TEXT,
+    adjudicator_version TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_eval_case_defect_adjudications_result
+    ON eval_case_defect_adjudications(eval_case_result_id);
 
 -- One row per canonical judge lens per eval case, always -- including
 -- lenses that ran and found zero defects, so "found nothing" and "never
@@ -183,12 +212,35 @@ CREATE INDEX IF NOT EXISTS idx_eval_case_schema_failures_result ON eval_case_sch
 """
 
 
+# Columns added to an already-created table after it shipped. SCHEMA above uses
+# CREATE TABLE IF NOT EXISTS, which is a no-op on an existing database -- so a
+# new column reaches a fresh .db and never reaches .engine/state.db, and the
+# very next INSERT there fails. Each entry is (table, column, DDL type).
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("agent_execution_metrics", "stop_reason", "TEXT"),
+    ("agent_execution_metrics", "thinking_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("agent_execution_metrics", "text_chars", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add any missing column from _ADDED_COLUMNS. Idempotent and additive --
+    it never drops, renames, or rewrites a column, so rows written by an older
+    version keep their values and simply carry the column default.
+    """
+    for table, column, ddl in _ADDED_COLUMNS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if existing and column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 @contextmanager
 def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:
@@ -267,8 +319,9 @@ def record_agent_execution_metric(conn: sqlite3.Connection, metric: AgentExecuti
     conn.execute(
         "INSERT INTO agent_execution_metrics "
         "(run_id, task_id, agent_name, model, input_tokens, output_tokens, "
-        "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error, "
+        "stop_reason, thinking_tokens, text_chars) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             metric.run_id,
             metric.task_id,
@@ -282,13 +335,17 @@ def record_agent_execution_metric(conn: sqlite3.Connection, metric: AgentExecuti
             str(metric.actual_spend) if metric.actual_spend is not None else None,
             metric.status,
             metric.error,
+            metric.stop_reason,
+            metric.thinking_tokens,
+            metric.text_chars,
         ),
     )
 
 
 _METRIC_COLUMNS = (
     "run_id, task_id, agent_name, model, input_tokens, output_tokens, "
-    "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error"
+    "cache_read_tokens, cache_creation_tokens, latency_ms, actual_spend, status, error, "
+    "stop_reason, thinking_tokens, text_chars"
 )
 
 
@@ -306,6 +363,9 @@ def _row_to_metric(row: tuple) -> AgentExecutionMetric:
         actual_spend=Decimal(row[9]) if row[9] is not None else None,
         status=row[10],
         error=row[11],
+        stop_reason=row[12],
+        thinking_tokens=row[13],
+        text_chars=row[14],
     )
 
 
@@ -522,6 +582,49 @@ def record_eval_case_defects(
                 _sqlite_safe(d.get("fix", "")),
             )
             for d in defects
+        ],
+    )
+
+
+def _sqlite_safe_optional(value: object) -> str | None:
+    return _sqlite_safe(value) if isinstance(value, str) else None
+
+
+def record_defect_adjudications(
+    conn: sqlite3.Connection, eval_case_result_id: int, records: list[dict]
+) -> None:
+    """``records`` is a list of ``admissibility.adjudication_record()`` dicts.
+
+    Writes only to the sidecar table. ``eval_case_defects`` is left exactly as
+    ``record_eval_case_defects`` wrote it, so the original defect text and the
+    original severity survive whatever the adjudicator concluded -- an
+    admissibility result is an additional fact about a defect, never a revision
+    of it.
+    """
+    conn.executemany(
+        "INSERT INTO eval_case_defect_adjudications "
+        "(eval_case_result_id, lens, defect_id, original_severity, evidence_json, "
+        "adjudication_json, admissible_to_block, rule, reason, probe_predicate, "
+        "probe_argument, probe_result, probe_interpreter_version, adjudicator_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                eval_case_result_id,
+                _sqlite_safe(str(r.get("lens", ""))),
+                _sqlite_safe(str(r.get("defect_id", ""))),
+                _sqlite_safe(str(r.get("original_severity", ""))),
+                _sqlite_safe(str(r.get("evidence_json", ""))),
+                _sqlite_safe(str(r.get("adjudication_json", ""))),
+                None if r.get("admissible_to_block") is None else int(r["admissible_to_block"]),
+                _sqlite_safe(str(r.get("rule", ""))),
+                _sqlite_safe(str(r.get("reason", ""))),
+                _sqlite_safe_optional(r.get("probe_predicate")),
+                _sqlite_safe_optional(r.get("probe_argument")),
+                _sqlite_safe_optional(r.get("probe_result")),
+                _sqlite_safe_optional(r.get("probe_interpreter_version")),
+                _sqlite_safe(str(r.get("adjudicator_version", ""))),
+            )
+            for r in records
         ],
     )
 

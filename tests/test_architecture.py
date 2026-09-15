@@ -60,6 +60,25 @@ alone:
           state). Eval is a *client* of the review flow, not a dependency
           of it; those three packages must stay usable without eval/ ever
           being on the import path.
+  Rule G: nothing under eval/, verification/, runtime/, state/ or
+          orchestrator/ may import engine.codeagent or engine.debugagent, and
+          neither agent package may reach providers/ or a provider SDK
+          directly. Both agents are leaf *clients* of the verification system:
+          they call run_verification and read the verdict, and nothing in the
+          verified-by path may depend on them. If the thing being verified ever
+          lands on the verifier's import path, the benchmark stops measuring
+          what it claims to. Rule D already forbids both packages inside eval/
+          for free (its allowlist names only eval/verification/runtime/state
+          plus engine.config), so this rule's eval/ clause is redundant by
+          construction and stated anyway -- the redundancy is what keeps the
+          guarantee if that allowlist is ever widened.
+
+          The rule also fixes the direction of the seam between the two agents:
+          debugagent/ imports codeagent/ (the workspace, the policy, the tool
+          registry, the session loop, the verification seam) and codeagent/
+          must never import debugagent/. One-way, because the Coding Agent
+          shipped first and every existing test of it must keep passing without
+          knowing the Debug Agent exists.
   Rule F: engine/llm_types.py must import nothing from engine.* -- it holds
           the gateway <-> provider data contract precisely because both
           sides may import it, which also makes it the one module in the
@@ -68,6 +87,38 @@ alone:
           otherwise keep apart (e.g. an import of engine.state would hand
           providers/ a path to the database). Keeping it a stdlib-only leaf
           is what makes it safe for everyone to depend on.
+  Rule I: only capabilities/external/transport.py may import a network module --
+          socket, ssl, http, urllib, an HTTP client, or an MCP SDK. One egress
+          chokepoint, exactly as Rule B gives provider SDKs one.
+
+          This is what lets the external capability be accepted offline. C6
+          proved the policy, the ledger, the port vocabulary and the adapter
+          against a scripted fake; C7 added a real transport, and this rule is
+          the evidence that the fake was not merely standing in for something
+          that had already leaked elsewhere. Every module except that one file
+          is provably incapable of a network call, so a suite that opens no
+          socket is a statement about the code rather than about the test setup.
+
+          The transport speaks Streamable HTTP over stdlib urllib rather than
+          through an MCP SDK: an SDK would bring its own transports, and those
+          would live outside the one file this rule names.
+  Rule H: engine/capabilities/ must not import codeagent/ or debugagent/, and
+          must not reach providers/ or a provider SDK. The capability layer
+          (Agent Skills, and later test detection and external lookups) is a
+          leaf that trades in paths, strings and frozen dataclasses.
+
+          Two things depend on that. The first is reuse: a future Refactoring
+          Agent must be able to use the layer without importing another agent.
+          The second is a security property. The whole skills design rests on a
+          skill being *text that grants nothing* -- a SKILL.md may declare
+          `allowed-tools`, and AgentGate records it and honours it never. That
+          holds today because SkillLoader has no reference to a tool dict, a
+          Workspace or a CommandPolicy, and it cannot acquire one while this
+          rule stands. Without the rule, "a skill grants nothing" degrades from
+          a fact about the import graph into a promise about future edits.
+
+          The seam runs one way: codeagent/ may import capabilities/ (the tool
+          adapters do, from C2), never the reverse.
 """
 
 import ast
@@ -78,8 +129,24 @@ SRC_ROOT = Path(__file__).parent.parent / "src" / "engine"
 # Extend as real SDKs are added (openai, google.generativeai, ollama, ...).
 PROVIDER_SDK_MODULES = {"anthropic"}
 
+# Modules that can open a connection. Rule I confines every one of them to
+# capabilities/external/transport.py.
+NETWORK_MODULES = {"socket", "ssl", "http", "httpx", "requests", "urllib", "aiohttp", "mcp"}
+
+# One standing exception, and it is not egress. `engine serve` runs a local
+# review API, and http.server ACCEPTS connections rather than opening them.
+# Rule I governs what may leave this machine, so an inbound listener is out of
+# its scope -- while http.client, which does open connections, stays caught
+# everywhere including api.py.
+NETWORK_ALLOWANCES = {("api.py", "http.server")}
+
 GATEWAY_FILE = SRC_ROOT / "runtime" / "gateway.py"
 LLM_TYPES_FILE = SRC_ROOT / "llm_types.py"
+
+# The leaf agent packages, and the packages that must never depend on them --
+# see the Rule G docstring above.
+AGENT_PACKAGES = ("codeagent", "debugagent")
+VERIFIED_BY_PACKAGES = ("eval", "verification", "runtime", "state", "orchestrator")
 
 # eval/'s allowed engine.* dependency surface -- see Rule D docstring above.
 EVAL_ALLOWED_ENGINE_PACKAGES = {"engine.eval", "engine.verification", "engine.runtime", "engine.state"}
@@ -221,4 +288,150 @@ def test_rule_f_llm_types_stays_a_leaf() -> None:
         "engine/llm_types.py must import nothing from engine.* -- every layer is allowed to "
         "import it, so an engine.* import there becomes a back-channel between layers that "
         "Rules B-E keep apart:\n" + "\n".join(violations)
+    )
+
+
+def test_rule_g_the_agents_are_leaf_clients() -> None:
+    violations = []
+    for path in _iter_source_files():
+        if any(_is_in_package(path, agent) for agent in AGENT_PACKAGES):
+            continue
+        if not any(_is_in_package(path, pkg) for pkg in VERIFIED_BY_PACKAGES):
+            continue
+        for name in _imported_module_names(path):
+            for agent in AGENT_PACKAGES:
+                if name == f"engine.{agent}" or name.startswith(f"engine.{agent}."):
+                    violations.append(f"{_relative(path)}: imports {name!r} (Rule G)")
+    assert not violations, (
+        "eval/, verification/, runtime/, state/ and orchestrator/ must never import "
+        "codeagent/ or debugagent/ -- both agents are clients of the verification "
+        "system, never dependencies of it. If the thing being verified is on the "
+        "verifier's import path, the benchmark stops measuring what it claims to:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_rule_g_the_agent_seam_runs_one_way() -> None:
+    """debugagent/ may import codeagent/; codeagent/ may never import debugagent/."""
+    violations = [
+        f"{_relative(path)}: imports {name!r} (Rule G)"
+        for path in _iter_source_files()
+        if _is_in_package(path, "codeagent")
+        for name in _imported_module_names(path)
+        if name == "engine.debugagent" or name.startswith("engine.debugagent.")
+    ]
+    assert not violations, (
+        "codeagent/ must never import debugagent/ -- the seam runs one way, which is "
+        "what lets every Coding Agent test keep passing without knowing the Debug "
+        "Agent exists:\n" + "\n".join(violations)
+    )
+
+
+def test_rule_h_capabilities_is_a_leaf() -> None:
+    """capabilities/ must not import codeagent/ or debugagent/.
+
+    This is what lets a future agent use the capability layer without another
+    agent on its import path, and it is also a security property rather than
+    only a tidiness one: a skill is text, and the whole layer rests on that text
+    never becoming authority. If capabilities/ could import codeagent, a later
+    edit could hand SkillLoader a CommandPolicy or a tool dict to consult, and
+    "a skill grants nothing" would become a promise instead of a fact about the
+    import graph.
+
+    The dependency runs one way: codeagent/ may import capabilities/ (the tool
+    adapters do, from C2), never the reverse.
+    """
+    violations = []
+    for path in _iter_source_files():
+        if not _is_in_package(path, "capabilities"):
+            continue
+        for name in _imported_module_names(path):
+            for agent in AGENT_PACKAGES:
+                if name == f"engine.{agent}" or name.startswith(f"engine.{agent}."):
+                    violations.append(f"{_relative(path)}: imports {name!r} (Rule H)")
+    assert not violations, (
+        "engine/capabilities/ must not import codeagent/ or debugagent/ -- it is a leaf, "
+        "which is what keeps a skill from ever reaching a policy object:\n" + "\n".join(violations)
+    )
+
+
+def test_rule_h_capabilities_does_not_reach_a_provider() -> None:
+    """Stated separately from Rules A/B so a failure names the capability layer.
+
+    capabilities/ has no reason to call a model at all: it reads files and
+    returns data. An SDK import here would mean something in the layer had grown
+    a model call, which is a design change, not an oversight.
+    """
+    violations = []
+    for path in _iter_source_files():
+        if not _is_in_package(path, "capabilities"):
+            continue
+        for name in _imported_module_names(path):
+            if name == "engine.providers" or name.startswith("engine.providers."):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule H)")
+            if name in PROVIDER_SDK_MODULES or any(
+                name.startswith(f"{sdk}.") for sdk in PROVIDER_SDK_MODULES
+            ):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule H)")
+    assert not violations, (
+        "engine/capabilities/ must not reach a provider or a provider SDK:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_rule_i_only_the_transport_reaches_a_network() -> None:
+    """One egress chokepoint, exactly as Rule B gives provider SDKs one.
+
+    A network module anywhere else would mean the boundary that decides what may
+    leave this machine is no longer the only thing that can leave it. Judged by
+    import path, so it covers a stdlib socket, an HTTP client, and an MCP SDK
+    alike -- and it is what lets the whole external capability be accepted with
+    no live call: everything except this one file is provably incapable of one.
+    """
+    allowed = SRC_ROOT / "capabilities" / "external" / "transport.py"
+    violations = []
+    for path in _iter_source_files():
+        if path == allowed:
+            continue
+        for name in _imported_module_names(path):
+            if (path.name, name) in NETWORK_ALLOWANCES:
+                continue
+            if name.split(".")[0] in NETWORK_MODULES:
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule I)")
+    assert not violations, (
+        "only capabilities/external/transport.py may reach a network:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_rule_i_the_transport_pulls_in_no_mcp_sdk() -> None:
+    """The transport speaks the protocol directly over stdlib HTTP. An SDK would
+    bring its own transports, and those would sit outside this rule's one file.
+    """
+    allowed = SRC_ROOT / "capabilities" / "external" / "transport.py"
+    imported = {name.split(".")[0] for name in _imported_module_names(allowed)}
+
+    assert "mcp" not in imported
+    assert imported & {"urllib"}, "the transport should reach the network through stdlib urllib"
+
+
+def test_rule_g_the_agents_do_not_reach_a_provider() -> None:
+    # Rules A and B already cover this by placement; asserted separately so a
+    # failure names the agent package directly instead of surfacing as a
+    # generic Rule A/B violation, and so the guarantee survives any future
+    # relaxation of those rules' scope.
+    violations = []
+    for path in _iter_source_files():
+        if not any(_is_in_package(path, agent) for agent in AGENT_PACKAGES):
+            continue
+        for name in _imported_module_names(path):
+            if name == "engine.providers" or name.startswith("engine.providers."):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule G)")
+            if name in PROVIDER_SDK_MODULES or any(
+                name.startswith(f"{sdk}.") for sdk in PROVIDER_SDK_MODULES
+            ):
+                violations.append(f"{_relative(path)}: imports {name!r} (Rule G)")
+    assert not violations, (
+        "codeagent/ and debugagent/ must reach a model only through runtime/gateway.py, "
+        "never through providers/ or a provider SDK directly:\n" + "\n".join(violations)
     )

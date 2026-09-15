@@ -10,11 +10,22 @@ from engine.providers.base import Message
 from engine.providers.registry import build_provider
 
 
-def _fake_anthropic_response(text: str) -> SimpleNamespace:
+def _fake_anthropic_response(
+    text: str, stop_reason: str | None = "end_turn", thinking_tokens: int | None = 4
+) -> SimpleNamespace:
+    """Mirrors the SDK's Message shape, including usage.output_tokens_details --
+    which is None on a response the model produced no thinking for."""
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=text)],
+        stop_reason=stop_reason,
         usage=SimpleNamespace(
-            input_tokens=10, output_tokens=5, cache_read_input_tokens=2, cache_creation_input_tokens=3
+            input_tokens=10,
+            output_tokens=5,
+            cache_read_input_tokens=2,
+            cache_creation_input_tokens=3,
+            output_tokens_details=(
+                None if thinking_tokens is None else SimpleNamespace(thinking_tokens=thinking_tokens)
+            ),
         ),
     )
 
@@ -56,6 +67,94 @@ def test_anthropic_provider_generate_parses_response() -> None:
         assert result.output_tokens == 5
         assert result.cache_read_tokens == 2
         assert result.cache_creation_tokens == 3
+        assert result.stop_reason == "end_turn"
+        assert result.thinking_tokens == 4
+
+
+def test_anthropic_provider_reports_truncation_and_reasoning_spend() -> None:
+    """The Phase 9C truncations were only inferable from output_tokens hitting
+    the cap. stop_reason must carry that directly, and thinking_tokens must
+    account for output the visible text never shows."""
+    with patch("engine.providers.anthropic_provider.Anthropic") as MockAnthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _fake_anthropic_response(
+            "", stop_reason="max_tokens", thinking_tokens=1600
+        )
+        MockAnthropic.return_value = mock_client
+
+        from engine.providers.anthropic_provider import AnthropicProvider
+
+        result = AnthropicProvider(api_key="fake-key").generate(
+            messages=[Message(role="user", content="hi")], model="claude-sonnet-5"
+        )
+
+        assert result.text == ""
+        assert result.stop_reason == "max_tokens"
+        assert result.thinking_tokens == 1600
+
+
+def test_anthropic_provider_handles_a_response_with_no_thinking_details() -> None:
+    """usage.output_tokens_details is absent when the model produced no
+    thinking at all -- that must read as zero, not crash."""
+    with patch("engine.providers.anthropic_provider.Anthropic") as MockAnthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _fake_anthropic_response(
+            "hi", thinking_tokens=None
+        )
+        MockAnthropic.return_value = mock_client
+
+        from engine.providers.anthropic_provider import AnthropicProvider
+
+        result = AnthropicProvider(api_key="fake-key").generate(
+            messages=[Message(role="user", content="hi")], model="claude-sonnet-5"
+        )
+
+        assert result.thinking_tokens == 0
+
+
+def test_anthropic_provider_omits_thinking_field_by_default() -> None:
+    """P1/P9 (Answer-Budget Phase 2). The default request -- every call
+    before this parameter existed, and every first-attempt judge call after
+    it -- must send no `thinking` field at all. `omit`, not `None` and not
+    `NOT_GIVEN`, is the SDK's own default for `thinking`
+    (`ThinkingConfigParam | Omit`); passing anything else would add a field
+    that was never on the wire before."""
+    from anthropic import omit
+
+    with patch("engine.providers.anthropic_provider.Anthropic") as MockAnthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _fake_anthropic_response("hello")
+        MockAnthropic.return_value = mock_client
+
+        from engine.providers.anthropic_provider import AnthropicProvider
+
+        AnthropicProvider(api_key="fake-key").generate(
+            messages=[Message(role="user", content="hi")], model="claude-sonnet-5"
+        )
+
+        sent_thinking = mock_client.messages.create.call_args.kwargs["thinking"]
+        assert sent_thinking is omit
+
+
+def test_anthropic_provider_sends_disabled_thinking_when_requested() -> None:
+    """P9. The one call site that ever passes thinking_disabled=True (the
+    judge's truncation retry) must reach the wire as exactly the registered
+    literal, `{"type": "disabled"}` -- nothing else."""
+    with patch("engine.providers.anthropic_provider.Anthropic") as MockAnthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _fake_anthropic_response("hello")
+        MockAnthropic.return_value = mock_client
+
+        from engine.providers.anthropic_provider import AnthropicProvider
+
+        AnthropicProvider(api_key="fake-key").generate(
+            messages=[Message(role="user", content="hi")],
+            model="claude-sonnet-5",
+            thinking_disabled=True,
+        )
+
+        sent_thinking = mock_client.messages.create.call_args.kwargs["thinking"]
+        assert sent_thinking == {"type": "disabled"}
 
 
 def test_build_provider_missing_key_raises() -> None:

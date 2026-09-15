@@ -31,11 +31,17 @@ class AnthropicProvider:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout_seconds: float | None = None,
+        thinking_disabled: bool = False,
     ) -> GenerationResult:
         # The SDK's `timeout` default is a NOT_GIVEN sentinel, not None --
         # explicitly passing timeout=None disables the timeout entirely
         # rather than falling back to the client's default. Only pass a real
         # value through when the caller actually asked for one.
+        #
+        # `omit` -- not `None`, not `NOT_GIVEN` -- is the SDK's own default for
+        # `thinking` (`ThinkingConfigParam | Omit`). Passing it when the flag
+        # is False sends no `thinking` field at all, byte-identical to every
+        # request made before this parameter existed.
         response = self._client.messages.create(
             model=model,
             system=system or "",
@@ -43,8 +49,14 @@ class AnthropicProvider:
             max_tokens=max_tokens,
             temperature=omit if model.startswith(_TEMPERATURE_REJECTED_BY) else temperature,
             timeout=timeout_seconds if timeout_seconds is not None else NOT_GIVEN,
+            thinking={"type": "disabled"} if thinking_disabled else omit,
         )
         text = "".join(block.text for block in response.content if block.type == "text")
+        # Thinking blocks are output tokens that never appear in `text` above,
+        # so `output_tokens` alone cannot say whether a response was spent on
+        # reasoning or on the answer. usage.output_tokens_details carries the
+        # split when the model produced any; it is absent otherwise.
+        details = response.usage.output_tokens_details
         return GenerationResult(
             text=text,
             model=model,
@@ -53,5 +65,7 @@ class AnthropicProvider:
             output_tokens=response.usage.output_tokens,
             cache_read_tokens=response.usage.cache_read_input_tokens or 0,
             cache_creation_tokens=response.usage.cache_creation_input_tokens or 0,
+            stop_reason=response.stop_reason,
+            thinking_tokens=details.thinking_tokens if details is not None else 0,
             raw=response,
         )

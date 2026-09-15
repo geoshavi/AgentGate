@@ -97,6 +97,64 @@ def test_select_cases_returns_all_when_category_is_none() -> None:
     assert len(select_cases(None)) == 40
 
 
+def test_select_cases_case_ids_filters_within_category(monkeypatch) -> None:
+    cases = select_cases("edge_case", case_ids=["edge_case-02-clean"])
+    assert [c.eval_case_id for c in cases] == ["edge_case-02-clean"]
+
+
+def test_select_cases_case_ids_default_is_no_extra_filtering() -> None:
+    assert len(select_cases("security", case_ids=None)) == 10
+
+
+def test_run_case_adjudicate_reaches_run_verification(monkeypatch, tmp_path: Path) -> None:
+    """The plumbing this milestone adds: run_case's adjudicate parameter must
+    reach run_verification unchanged, exactly like shadow_adjudicate already
+    does."""
+    captured: dict = {}
+
+    def fake_run_verification(workspace, gateway, budget, judge_model, task_text, **kwargs):
+        captured.update(kwargs)
+        return "OK", {"defects": [], "verdict": "OK"}, []
+
+    monkeypatch.setattr(runner_module, "run_verification", fake_run_verification)
+
+    with db.connect(tmp_path / "state.db") as conn:
+        run_id = db.create_run(conn, "eval", "anthropic", "m")
+        run_case(
+            _case(),
+            gateway=_gateway(),
+            budget=_budget(),
+            judge_model="m",
+            conn=conn,
+            run_id=run_id,
+            eval_run_id=1,
+            adjudicate=True,
+        )
+        conn.commit()
+
+    assert captured["adjudicate"] is True
+    assert captured["shadow_adjudicate"] is False
+
+
+def test_run_case_defaults_adjudicate_to_false(monkeypatch, tmp_path: Path) -> None:
+    captured: dict = {}
+
+    def fake_run_verification(workspace, gateway, budget, judge_model, task_text, **kwargs):
+        captured.update(kwargs)
+        return "OK", {"defects": [], "verdict": "OK"}, []
+
+    monkeypatch.setattr(runner_module, "run_verification", fake_run_verification)
+
+    with db.connect(tmp_path / "state.db") as conn:
+        run_id = db.create_run(conn, "eval", "anthropic", "m")
+        run_case(
+            _case(), gateway=_gateway(), budget=_budget(), judge_model="m", conn=conn, run_id=run_id, eval_run_id=1
+        )
+        conn.commit()
+
+    assert captured["adjudicate"] is False
+
+
 def test_run_case_cost_and_latency_equal_sum_of_linked_metric_rows(monkeypatch, tmp_path: Path) -> None:
     def fake_run_verification(workspace, gateway, budget, judge_model, task_text, **kwargs):
         conn, run_id, task_id = kwargs["conn"], kwargs["run_id"], kwargs["task_id"]
@@ -258,6 +316,32 @@ def test_run_benchmark_continues_after_one_case_errors(monkeypatch, tmp_path: Pa
     assert len(errored) == 1
     assert "boom on case 2" in errored[0].error
     assert eval_run.total_cases == 10
+
+
+def test_run_benchmark_case_ids_restricts_to_named_cases_and_threads_adjudicate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured_kwargs: list[dict] = []
+
+    def fake_run_verification(workspace, gateway, budget, judge_model, task_text, **kwargs):
+        captured_kwargs.append(kwargs)
+        return "OK", {"defects": [], "verdict": "OK"}, []
+
+    monkeypatch.setattr(runner_module, "run_verification", fake_run_verification)
+
+    _eval_run, results = run_benchmark(
+        config=_config(tmp_path),
+        provider_name="anthropic",
+        judge_model="m",
+        case_ids=["edge_case-02-clean", "edge_case-02-broken"],
+        adjudicate=True,
+    )
+
+    assert len(results) == 2
+    assert {r.eval_case_id for r in results} == {"edge_case-02-clean", "edge_case-02-broken"}
+    assert len(captured_kwargs) == 2
+    assert all(kw["adjudicate"] is True for kw in captured_kwargs)
+    assert all(kw["shadow_adjudicate"] is False for kw in captured_kwargs)
 
 
 def test_run_benchmark_persists_and_reads_back_via_get_eval_run(monkeypatch, tmp_path: Path) -> None:
@@ -596,7 +680,7 @@ class _SequencedFakeProvider:
         self._responses = list(responses)
         self._calls = 0
 
-    def generate(self, messages, model, system=None, max_tokens=4096, temperature=0.0, timeout_seconds=None):
+    def generate(self, messages, model, system=None, max_tokens=4096, temperature=0.0, timeout_seconds=None, thinking_disabled=False):
         text = self._responses[self._calls]
         self._calls += 1
         return GenerationResult(
@@ -617,7 +701,7 @@ class _FailingSequencedFakeProvider:
         self._items = list(items)
         self._calls = 0
 
-    def generate(self, messages, model, system=None, max_tokens=4096, temperature=0.0, timeout_seconds=None):
+    def generate(self, messages, model, system=None, max_tokens=4096, temperature=0.0, timeout_seconds=None, thinking_disabled=False):
         item = self._items[self._calls]
         self._calls += 1
         if isinstance(item, Exception):

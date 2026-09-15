@@ -1,5 +1,4 @@
-<img width="1536" height="1024" alt="8abfc9de-d3ce-4147-96fc-db843e66f480" src="https://github.com/user-attachments/assets/fd079104-aea4-4866-bb76-93fcad8dbdad" />
-
+<img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/fd079104-aea4-4866-bb76-93fcad8dbdad" />
 
 
 # AgentGate
@@ -19,7 +18,7 @@ keep their existing names.
 Working runtime: single provider (Anthropic), sequential multi-agent execution
 (coding / research / testing / refactoring), bounded retry loop, automated gates
 (ruff/mypy/pytest) + 3-lens LLM-judge review, deterministic verdict, SQLite run
-history and per-call metrics. 153 tests.
+history and per-call metrics. 1,875 tests (1,872 passing, 3 skipped).
 
 Every LLM call in the codebase — agents and judge lenses alike — routes through
 a single gateway (`runtime/gateway.py`) that enforces a token/spend budget
@@ -75,6 +74,63 @@ provider SDKs may only be imported inside `runtime/` and `providers/`; only
 import `runtime/`. These fail with the offending file and the rule it broke,
 so the gateway cannot be quietly bypassed by future code.
 
+## Agent Capabilities
+
+Beyond `engine run`, AgentGate ships two purpose-built engineering agents.
+Both edit the given workspace **in place**, refuse to run against this
+engine's own source tree, and route their output through the same AgentGate
+verification path described above.
+
+### Coding Agent — `engine code`
+
+Takes a bounded coding task through planning, in-workspace file edits with
+real tools and test runs, then AgentGate verification. Exit `0` means
+AgentGate verified the work, `1` means it was reviewed and blocked, `2` means
+the agent or runtime never reached a verdict.
+
+```
+engine code "<task>" --workspace <directory>
+```
+
+Full flag reference, the exit-code contract, and a walkthrough:
+[`docs/coding-agent.md`](docs/coding-agent.md).
+
+### Debug Agent — `engine debug`
+
+Given a reported failure and a reproduction command (`--repro`, repeated,
+one argv token each), reproduces the bug, diagnoses it, applies the smallest
+fix, then **proves** the fix by re-running the frozen reproduction and the
+full regression suite before AgentGate reviews the change. Exit `0` only
+when the fix is proven *and* AgentGate verified it.
+
+```
+engine debug "<reported bug>" --workspace <directory> --repro=<token> ...
+```
+
+Full flag reference, the report's `observed` / `claimed` / `agentgate`
+split, and a walkthrough: [`docs/debug-agent.md`](docs/debug-agent.md).
+
+**Try it:** `examples/cart_bug/` is a committed-broken fixture (an empty cart
+crashes on `min()` of an empty sequence) with the exact reported bug and
+commands in `examples/cart_bug/TASK.md`. It's built to show the Debug
+Agent's proof gate catching the tempting shortcut fix that passes the
+reproduction but breaks a neighboring test.
+
+Neither agent is a sandbox — see the linked docs for the exact safety
+boundary (argv allowlists, path guards, scrubbed environment) before
+pointing either at anything you're not willing to see changed.
+
+### Additional agent modules (not CLI-exposed)
+
+`src/engine` also contains five further agent compositions built on the same
+AgentGate-verified pipeline as `engine code` — `architectureagent`,
+`docsagent`, `refactoragent`, `securityagent`, `testqaagent` — each with its
+own system prompt, tool set and dedicated test suite. **None of them has a
+`cli.py` entry point or documented usage today.** Their presence in the
+source tree is not a claim of supported public CLI functionality —
+`engine code` and `engine debug` remain the only currently documented public
+agent workflows.
+
 ## Benchmark
 
 The verification pipeline is measured against a project-specific suite,
@@ -92,17 +148,24 @@ anchors (SQL injection, mutable default argument) with subtle ones (weak
 randomness, SSRF, timing-attack comparison, Unicode truncation, non-atomic
 increment) so it tests generalization rather than keyword matching.
 
-**Result** — five runs at the same commit, dataset frozen:
+**Current dataset/judge configuration:** dataset v6, judge `claude-sonnet-5`.
+
+**Result — Run 68**, the most recent standard full 40-case run (post-closure health
+check, no `--adjudicate`, no `--shadow-adjudicate`):
 
 | | |
 | --- | --- |
-| Scores | **36, 35, 35, 35, 35** |
-| Mean | **35.2 / 40 = 88.0%** |
-| Sample SD | **0.447** |
-| False passes (broken code accepted) | **0 / 100** broken-case observations |
-| Deterministic cases | 39 of 40 |
-| Stable clean failures | 4 cases at 0/5 |
-| Variable clean case | `edge_case-04-clean` at 1/5 — the only source of score variance |
+| Score | **38 / 40 (95.0%)** |
+| False passes (broken code accepted) | **0** |
+| False unverified | 2 — `security-02-clean`, `security-04-clean` (both known, closed/adjudicated cases; see Known limitations) |
+| Category accuracy | correctness 100%, quality 100%, edge_case 100%, security 80% |
+
+38/40 and 39/40 both recur repeatedly across independent dataset-v6 configuration
+clusters (runs 50, 53, 57, 60, 61 and runs 51, 54, 58, 63, 64) — Run 68 falls
+inside that already-observed range. This is a qualitative consistency check, not
+a pooled variance computation across those non-identical configurations; see
+`docs/benchmark/BASELINE.md` for the full run-by-run record, including the
+dataset v1-v4 history preceding the v6 cluster.
 
 Run it with `engine bench` (`--dry-run` validates the dataset and prints the cost
 plan without making a single API call).
@@ -131,24 +194,44 @@ including the measurements that killed it.
 
 ### Known limitations
 
-- **Four clean cases fail consistently** (`correctness-02-clean`,
-  `security-02-clean`, `security-04-clean`, `edge_case-03-clean`), which caps this
-  configuration at 36/40. The judge blocks them on claims that are factually
-  wrong, spec-irrelevant, or an implementation preference. A read-only analysis
-  (`docs/experiments/PHASE8E0_SAFE_IMPROVEMENT_SELECTION.md`) found no general, deterministic fix
-  that does not also risk accepting their broken twins, so the search was stopped
-  rather than continued unsafely.
-- **`edge_case-04-clean` is variable** (1/5) — it flips on a single defect
-  crossing the MEDIUM/HIGH boundary, and is the sole source of run-to-run score
-  variance.
-- **Judge lens calls are capped at `max_tokens=800`.** On the largest fixture a
-  response occasionally truncates, which fails closed to `UNVERIFIED`. Raising it
-  is a cost and comparability trade-off, not a free fix, so it is left as a known
-  operational limit.
-- **Single provider** (Anthropic) and sequential execution.
+**Actual remaining limitation:**
+
+- **`security-04-clean` is closed by adjudication, not fixed.** Two HIGH
+  `security` findings (a `getaddrinfo` return-selection/ordering framing and a
+  DNS-rebinding framing excluded by the task's own explicit guarantee) map to
+  already-adjudicated v6-dataset/spec buckets that no current verifier-side
+  mechanism can resolve; both remain `fail-closed-unresolved` on repeated
+  independent replay. A MEDIUM CGNAT (`100.64.0.0/10`) concern on the same case
+  remains visible and is deliberately not suppressed. Deferred to a possible
+  future v7 dataset revision. See `docs/benchmark/BASELINE.md` for the full
+  adjudication record.
+
+**Historically closed (no longer current limitations):**
+
+- `correctness-02-clean` — **CLOSED / FIXED** (dataset v5 amendment A-4).
+- `security-02-clean` — **CLOSED / FIXED** (dataset/spec amendments v5/v6).
+  Occasional `UNVERIFIED` results on later runs (e.g. Run 68) have been traced to
+  a pre-existing verdict-consistency schema-failure class, not a regression of
+  the fix, and do not reopen the closure.
+- `edge_case-02-clean` — **CLOSED / RESOLVED for known historical false-blocker
+  families**, via live-validated Route A/B contract-evidence adjudication (Run
+  66). This is not a claim of universal coverage against future judge phrasing.
+
+Reopening any of the above requires new, independent evidence — a freshly
+observed case-specific defect — not a re-read of the runs already recorded.
+
+- **Judge lens calls are capped at `max_tokens=1600`.** On the largest fixture a
+  response can still truncate, which fails closed to `UNVERIFIED`. Raising it
+  further is a cost and comparability trade-off, not a free fix, so it is left as
+  a known operational limit.
+- **Single provider** (Anthropic) and sequential execution. Pinned to
+  `anthropic>=0.40.0,<1.0.0` for SDK compatibility; nothing in the repository
+  currently wires up runtime routing to another provider.
 
 ## Project documentation
 
+- `docs/coding-agent.md` — `engine code` reference, safety model, walkthrough
+- `docs/debug-agent.md` — `engine debug` reference, safety model, walkthrough
 - `docs/benchmark/` — benchmark design, amendments, changelog, historical baseline
 - `docs/experiments/` — pre-registered experiments and rejected intervention evidence
 - `FINAL_PROJECT_STATUS.md` — release-candidate summary
