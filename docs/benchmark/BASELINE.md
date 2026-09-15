@@ -798,6 +798,83 @@ case-specific failure, not a re-read of the runs already recorded here. Every hi
 run record and prior pre-registration document (including `ADDENDUM_03`'s own frozen §3.7
 wording) remains append-only and is not rewritten by this entry.
 
+## Run 68 — post-closure full 40-case health check
+
+**Run 68.** Standard full 40-case benchmark, no `--adjudicate`, no `--shadow-adjudicate`.
+Stamped SHA `e9baa1c0e80fe307fe4c617d61bf98b4970de07f`, anthropic/claude-sonnet-5 (verified
+via `agent_execution_metrics` and the `runs` table, not assumed), dataset v6.
+`total_cases=40`, `correct_verdicts=38` (38/40, 95.0%), `false_pass=0`,
+`false_unverified=2`, `total_cost=$0.764656`. Read from a scratchpad copy of
+`.engine/state.db` (`eval_runs` id 68); every figure in this entry was independently
+reconstructed from that copy, not transcribed from the request that produced it.
+
+Integrity: 40/40 `eval_case_results` rows, 0 `error` rows, 120/120
+`eval_case_lens_results.call_status = ok`, 120/120 `eval_case_automated_gates.passed = 1`,
+125/125 `agent_execution_metrics` rows `status = ok` (120 base lens calls + 5 retries).
+**3 schema failures** (`correctness` lens x2, `security` lens x1) — recorded per the
+standing rule that schema failures are logged, not disqualifying. Summed case latency is
+**645,971 ms** exactly (`SUM(eval_case_results.latency_ms)` over the 40 rows).
+
+Category accuracy: correctness 100% (10/10), quality 100% (10/10), edge_case 100% (10/10),
+security 80% (8/10).
+
+This run is **not part of any pre-registration**. Run 67 (immediately above) already
+closed the four historical clean cases and stated "Runs 68+ are not needed for it." Run 68
+is recorded here as a routine post-closure sanity check on a standard 40-case run, per
+`baseline-evidence`'s instruction to record every new measurement.
+
+**Mismatches (2, both `false_unverified`; `false_pass=0`):**
+
+**1. `security-02-clean`** — expected OK, actual UNVERIFIED. All three lenses recorded
+`defect_count=0`; the `correctness` lens nonetheless returned `schema_valid=0` with
+`error_detail = "verdict: is 'OK' but expected 'FAIL' given the defects"`. This is the same
+verdict-consistency schema-failure class already documented in this file (run 44's note:
+"24 are verdict inconsistencies and only 6 are missing-JSON"; Run 67's identical framing
+for `security-04-clean`, below). Zero recorded defects rules out a reappearance of the
+argument-injection gap A-5 closed or the fixture gap A-6 closed — this is schema noise,
+not a regression of either fix, and **does not reopen** `security-02-clean`'s CLOSED /
+FIXED status from Run 67.
+
+**2. `security-04-clean`** — expected OK, actual UNVERIFIED. Findings sit inside the
+buckets Run 67 already froze at closure: the `getaddrinfo`/DNS-rebinding framings (still
+`admissible=True` / fail-closed-unresolved on Run 67's Route A/B replay) and the MEDIUM
+CGNAT (`100.64.0.0/10`) concern, which **remains visible** exactly as Run 67 left it —
+admissibility only ever evaluates HIGH/CRITICAL severity, so CGNAT was never a suppression
+candidate. No genuinely new verifier-side defect appears. **Does not reopen** Run 67's
+`CLOSED BY ADJUDICATION / v6 DATASET-SPEC LIMITATION` status, which was explicit that
+`security-04-clean` is not fixed and that the CGNAT concern is not erased by closure.
+
+**Not a mismatch:** `security-03-broken` — expected UNVERIFIED, actual **UNVERIFIED**
+(`passed=1`). Its `security` lens returned `schema_valid=0` (missing `severity` key), but
+the gated verdict was already correct, so this is a schema failure only, per the standing
+"recorded, not disqualifying" rule.
+
+**Closed-case spot check (informational only — the closure itself is not reopened):**
+
+| case | Run 68 result | Run 67 closure status |
+|---|---|---|
+| `correctness-02-clean` | OK — correct | CLOSED / FIXED |
+| `security-02-clean` | UNVERIFIED — mismatch, schema noise (see above) | CLOSED / FIXED |
+| `edge_case-02-clean` | OK — correct | CLOSED / RESOLVED FOR KNOWN HISTORICAL FALSE-BLOCKER FAMILIES |
+| `security-04-clean` | UNVERIFIED — mismatch, already-catalogued bucket (see above) | CLOSED BY ADJUDICATION / v6 DATASET-SPEC LIMITATION |
+
+None of the four closure statuses changes. Per Run 67's own closure language, reopening any
+of them requires new, independent evidence — a freshly observed case-specific defect, not
+a re-read of runs already recorded. Neither mismatch above is such evidence.
+
+**Comparison.** Run 46 (36/40) is **not a comparable baseline** — dataset v4, a different
+configuration cluster; only qualitative comparison is possible across that boundary.
+Within dataset v6, both 38/40 (runs 50, 53, 57, 60, 61) and 39/40 (runs 51, 54, 58, 63, 64)
+already recur across multiple v6 configuration clusters. Run 68's 38/40 falls inside that
+already-observed range. This is a qualitative consistency check, not a variance
+computation — v6 runs span several non-identical-configuration clusters, so no pooled v6
+SD is claimed here — and is not, on its own, evidence of a regression.
+
+**Interpretation: POST-CLOSURE FULL HEALTH CHECK — HEALTHY / NO NEW REGRESSION.**
+`false_pass` remains 0. This entry does not claim Run 68 demonstrates universal
+correctness or general authoritative-adjudication safety, and it does not reopen any of
+the four historical closure statuses recorded under Run 67.
+
 ## Notes
 
 - Runs 6-9 were executed on an identical commit (942f509) and show a spread of 29-32/40 correct verdicts (72.5%-80.0%), i.e. a ±3/40 noise floor. Single-run deltas smaller than this are not interpretable as real changes.
