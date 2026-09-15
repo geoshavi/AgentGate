@@ -116,6 +116,20 @@ def test_an_unknown_operation_is_denied() -> None:
         policy().check(capability=CONTEXT7_PROVIDER, operation="write_docs")
 
 
+def test_default_empty_policies_do_not_share_a_mapping_instance() -> None:
+    """Guards the ``field(default_factory=...)`` fix: a plain class-level
+    default would hand every no-argument ``EgressPolicy()`` the identical
+    mapping object. That happens to be harmless today only because an empty
+    mappingproxy can't be mutated through any public path -- a future field
+    of this shape might not be so lucky, so the independence is pinned here."""
+    first = EgressPolicy()
+    second = EgressPolicy()
+
+    assert first.capabilities is not second.capabilities
+    assert first == second
+    assert first.empty and second.empty
+
+
 def test_the_policy_is_immutable() -> None:
     live = policy()
 

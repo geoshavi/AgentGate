@@ -12,9 +12,9 @@ exercise is unchanged and must keep passing unmodified.
 import subprocess
 
 import pytest
+from test_dataset_v5_amendments import A5_ACCEPTED, A5_REJECTED
 
 from engine.eval.dataset import TASKS
-from tests.test_dataset_v5_amendments import A5_ACCEPTED, A5_REJECTED
 
 
 def _load(source: str, name: str, label: str):

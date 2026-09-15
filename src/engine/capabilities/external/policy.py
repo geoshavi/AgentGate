@@ -22,7 +22,7 @@ capability or operation name as an argument.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from engine.capabilities.errors import EgressDenied
@@ -52,7 +52,7 @@ class ExternalCapability:
 class EgressPolicy:
     """The allowlist. Empty means no external capability exists at all."""
 
-    capabilities: Mapping[str, ExternalCapability] = MappingProxyType({})
+    capabilities: Mapping[str, ExternalCapability] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
     def none(cls) -> "EgressPolicy":
