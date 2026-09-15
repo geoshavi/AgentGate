@@ -29,11 +29,26 @@ src/engine/verification/verdict.py
 src/engine/verification/pipeline.py
 src/engine/runtime/gateway.py
 src/engine/runtime/budget.py
+src/engine/config.py                    (DEFAULT_MODELS -- judge model selection)
 ```
 
 **Never edit these without explicit approval in the current turn**, and never as a
 side effect of another task. If a task appears to require touching one, stop and say so
 before writing anything.
+
+**Why `config.py` is on this list** (added 2026-09-02, after the fact). `cli.py`'s bench
+path reads `DEFAULT_MODELS[provider]["judge"]` to decide which model *every* judge lens
+runs on. That choice is as decisive for the measured configuration as the lens prompts
+themselves, and changing it silently starts a new configuration cluster in which no prior
+run is a valid baseline. Commit `83a4000` ("Experiment: upgrade judge to Sonnet 5") did
+exactly that — moving the judge from `claude-haiku-4-5-20251001`, which produced every one
+of runs 1-42, to `claude-sonnet-5` — without tripping any approval gate, because the file
+was not listed here. The consequences were not small: cost and wall time rose ~4.4x and
+~3x, and every off-lens, severity and stability figure in `BASELINE.md` became a statement
+about a model the benchmark no longer runs. Only `DEFAULT_MODELS` carries this weight;
+the rest of `config.py` reads environment variables, and editing those parts is ordinary
+work. Treat a change to any model string as a measured-path change requiring approval and
+a `BASELINE.md` note.
 
 ## Pre-run gate
 
