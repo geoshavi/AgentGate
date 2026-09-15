@@ -74,6 +74,52 @@ provider SDKs may only be imported inside `runtime/` and `providers/`; only
 import `runtime/`. These fail with the offending file and the rule it broke,
 so the gateway cannot be quietly bypassed by future code.
 
+## Agent Capabilities
+
+Beyond `engine run`, AgentGate ships two purpose-built engineering agents.
+Both edit the given workspace **in place**, refuse to run against this
+engine's own source tree, and route their output through the same AgentGate
+verification path described above.
+
+### Coding Agent — `engine code`
+
+Takes a bounded coding task through planning, in-workspace file edits with
+real tools and test runs, then AgentGate verification. Exit `0` means
+AgentGate verified the work, `1` means it was reviewed and blocked, `2` means
+the agent or runtime never reached a verdict.
+
+```
+engine code "<task>" --workspace <directory>
+```
+
+Full flag reference, the exit-code contract, and a walkthrough:
+[`docs/coding-agent.md`](docs/coding-agent.md).
+
+### Debug Agent — `engine debug`
+
+Given a reported failure and a reproduction command (`--repro`, repeated,
+one argv token each), reproduces the bug, diagnoses it, applies the smallest
+fix, then **proves** the fix by re-running the frozen reproduction and the
+full regression suite before AgentGate reviews the change. Exit `0` only
+when the fix is proven *and* AgentGate verified it.
+
+```
+engine debug "<reported bug>" --workspace <directory> --repro=<token> ...
+```
+
+Full flag reference, the report's `observed` / `claimed` / `agentgate`
+split, and a walkthrough: [`docs/debug-agent.md`](docs/debug-agent.md).
+
+**Try it:** `examples/cart_bug/` is a committed-broken fixture (an empty cart
+crashes on `min()` of an empty sequence) with the exact reported bug and
+commands in `examples/cart_bug/TASK.md`. It's built to show the Debug
+Agent's proof gate catching the tempting shortcut fix that passes the
+reproduction but breaks a neighboring test.
+
+Neither agent is a sandbox — see the linked docs for the exact safety
+boundary (argv allowlists, path guards, scrubbed environment) before
+pointing either at anything you're not willing to see changed.
+
 ## Benchmark
 
 The verification pipeline is measured against a project-specific suite,
@@ -171,6 +217,8 @@ observed case-specific defect — not a re-read of the runs already recorded.
 
 ## Project documentation
 
+- `docs/coding-agent.md` — `engine code` reference, safety model, walkthrough
+- `docs/debug-agent.md` — `engine debug` reference, safety model, walkthrough
 - `docs/benchmark/` — benchmark design, amendments, changelog, historical baseline
 - `docs/experiments/` — pre-registered experiments and rejected intervention evidence
 - `FINAL_PROJECT_STATUS.md` — release-candidate summary
