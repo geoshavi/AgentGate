@@ -1,9 +1,7 @@
-"""A tiny cart total, deliberately incomplete.
+"""Small cart-total fixture used to exercise empty-cart diagnosis and repair.
 
-The bulk discount is computed before anything checks that the cart has
-contents. This is the Debug Agent demo fixture: small enough that a real
-provider run costs almost nothing, broken in exactly one place, and wrong in a
-way whose obvious fix is in the wrong function.
+The fixture is intentionally minimal so the Debug Agent can reproduce,
+diagnose, repair, and verify the empty-cart failure end to end.
 """
 
 from dataclasses import dataclass
