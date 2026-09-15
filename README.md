@@ -10,7 +10,7 @@ gates every output before it's accepted.
 [![engine-review-benchmark](https://img.shields.io/badge/engine--review--benchmark-38%2F40-blue)](#benchmark)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/geoshavi/AgentGate/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://github.com/geoshavi/AgentGate/blob/main/pyproject.toml)
-[![Release](https://img.shields.io/badge/release-v1.0.0--pending-lightgrey)](https://github.com/geoshavi/AgentGate/releases)
+[![Release](https://img.shields.io/badge/release-v1.0.0-brightgreen)](https://github.com/geoshavi/AgentGate/releases/tag/v1.0.0)
 
 AgentGate is an AI agent orchestration engine: an orchestrator analyzes a
 task, builds a validated execution plan, dispatches specialized sub-agents
