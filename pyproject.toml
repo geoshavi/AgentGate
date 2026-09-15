@@ -14,7 +14,15 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
 ]
 dependencies = [
-  "anthropic>=0.40.0",
+  # anthropic>=1.0.0 removed `temperature` from Messages.create entirely --
+  # not a typing change, a runtime one (verified: absent from
+  # inspect.signature and from the installed package's source at 1.5.0).
+  # `temperature` is a required, contract-level parameter of the `Provider`
+  # Protocol (providers/base.py) that every provider implementation and the
+  # gateway thread through for deterministic sampling; there is no 1.x
+  # replacement to preserve that behavior with. Capped below the major
+  # version that dropped it rather than changing what this engine asks for.
+  "anthropic>=0.40.0,<1.0.0",
   "python-dotenv>=1.0.1",
   "pydantic>=2.9.0",
   # Agent Skills front matter is YAML by specification. Parsed with
