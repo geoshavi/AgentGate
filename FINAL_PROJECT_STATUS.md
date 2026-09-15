@@ -1,6 +1,8 @@
 # AgentGate — Final Project Status
 
-Release candidate. Accuracy optimization is closed.
+Release candidate. Accuracy optimization is closed. The historical
+verifier-hardening thread (§3 below) is **CLOSED**; see §3a for the current
+closure record and `docs/benchmark/BASELINE.md` for the full evidence.
 
 ---
 
@@ -9,15 +11,18 @@ Release candidate. Accuracy optimization is closed.
 | | |
 | --- | --- |
 | Benchmark | `engine-review-benchmark` |
-| `BENCHMARK_VERSION` / `DATASET_VERSION` | **v2 / v4** |
-| Dataset checkpoint | `f79353c65099561854e63ed2a8b8e23aaa2c58ce` |
-| Judge model | `claude-haiku-4-5-20251001` (Anthropic) |
-| Runtime verdict path | byte-identical to the proven safe engine `53d8a42` |
-| Whole `src/` tree vs `53d8a42` | one file, `state/db.py` (persistence hardening, off the measured path) |
+| `BENCHMARK_VERSION` / `DATASET_VERSION` (current) | **v2 / v6** |
+| Judge model (current) | `claude-sonnet-5` (Anthropic) |
+| Runtime verdict path | byte-identical to the proven safe engine `53d8a42` at the historical `f79353c65099561854e63ed2a8b8e23aaa2c58ce` checkpoint; see `docs/benchmark/BASELINE.md` for every configuration since |
+
+The dataset/judge pairing below in §2 (v2/v4, `claude-haiku-4-5-20251001`) is
+**historical** — the release-candidate configuration this section originally
+described. It is preserved for provenance and is superseded by the current
+v6/`claude-sonnet-5` runs in §3a and `docs/benchmark/BASELINE.md`.
 
 ---
 
-## 2. Validated benchmark result
+## 2. Historical validated benchmark result (v2 / v4, superseded)
 
 Five runs at one commit, dataset frozen, no configuration change between runs:
 
@@ -30,26 +35,54 @@ Five runs at one commit, dataset frozen, no configuration change between runs:
 | Deterministic cases | 39 of 40 |
 | Cost | $0.643 for the five runs |
 
-Recorded in `.engine/experiments/phase8d0-stability/`. This is the only benchmark
-claim the project makes.
+Recorded in `.engine/experiments/phase8d0-stability/`. **This result is
+historical, at the v4/Haiku configuration, and is not the current benchmark
+state** — see §3a for the current (dataset v6, `claude-sonnet-5`) result.
 
 ---
 
-## 3. Remaining known failures
+## 3. Historical remaining known failures (v2 / v4, superseded)
 
-Four clean cases fail in every stored observation, capping this configuration at
-36/40:
+At the v4/Haiku configuration above, four clean cases failed in every stored
+observation, capping that configuration at 36/40:
 
-| Case | Rate | Why the judge blocks it |
+| Case | Rate | Why the judge blocked it |
 | --- | --- | --- |
-| `correctness-02-clean` | 0/5 | Rates `abs(a - b) < 0.01` HIGH and asks for `decimal`, though the code *is* the stated predicate — an implementation preference |
-| `edge_case-03-clean` | 0/5 | Two lenses claim `str` slicing splits multi-byte UTF-8. It cannot: `str` slices code points. The fix it prescribes is that task's own broken fixture |
-| `security-02-clean` | 0/5 | Two blockers allege shell injection against `subprocess.run([...])` with no shell, each conceding non-exploitability in its own text; a third (uncaught `FileNotFoundError`) is factually true but not required by the task |
-| `security-04-clean` | 0/5 | Claims contradicted by the supplied code (an `all()` check) or excluded by the task's own wording; claim content varies run to run |
+| `correctness-02-clean` | 0/5 | Rated `abs(a - b) < 0.01` HIGH and asked for `decimal`, though the code *is* the stated predicate — an implementation preference |
+| `edge_case-03-clean` | 0/5 | Two lenses claimed `str` slicing splits multi-byte UTF-8. It cannot: `str` slices code points. The fix it prescribed was that task's own broken fixture |
+| `security-02-clean` | 0/5 | Two blockers alleged shell injection against `subprocess.run([...])` with no shell, each conceding non-exploitability in its own text; a third (uncaught `FileNotFoundError`) was factually true but not required by the task |
+| `security-04-clean` | 0/5 | Claims contradicted by the supplied code (an `all()` check) or excluded by the task's own wording; claim content varied run to run |
 
-`edge_case-04-clean` is variable (1/5) and is the sole source of score variance —
-it flips on a single defect crossing the MEDIUM/HIGH boundary. It is treated as a
-guardrail and was never optimized.
+`edge_case-04-clean` was variable (1/5) at that configuration and was the sole
+source of score variance there. **These are the v4/Haiku-configuration
+observations; they do not describe the current dataset v6 configuration** — see
+§3a.
+
+## 3a. Current closure record (dataset v6, `claude-sonnet-5`)
+
+The four *original* historical clean cases (a distinct, later case set from §3's
+v4-era list; case identities are dataset-version-specific) were closed in Run 67
+(`docs/benchmark/BASELINE.md`, "Run 67 — final closure validation"):
+
+| Case | Closure status |
+| --- | --- |
+| `correctness-02-clean` | **CLOSED / FIXED** — dataset v5 amendment A-4 |
+| `security-02-clean` | **CLOSED / FIXED** — dataset/spec amendments v5/v6 |
+| `edge_case-02-clean` | **CLOSED / RESOLVED for known historical false-blocker families** — live-validated Route A/B contract-evidence adjudication, Run 66; not a claim of universal future coverage |
+| `security-04-clean` | **CLOSED BY ADJUDICATION / v6 dataset-spec limitation** — not fixed; deferred to a possible future v7 dataset revision; its MEDIUM CGNAT concern remains visible and unsuppressed |
+
+**Run 68** (post-closure full 40-case health check, standard run, no
+`--adjudicate`/`--shadow-adjudicate`, dataset v6, judge `claude-sonnet-5`):
+**38/40 (95.0%)**, `false_pass = 0`, `false_unverified = 2`
+(`security-02-clean`, `security-04-clean` — both schema-noise / already-catalogued
+adjudication buckets, neither reopening its closure). Category accuracy:
+correctness 100%, quality 100%, edge_case 100%, security 80%. Interpretation per
+`docs/benchmark/BASELINE.md`: **healthy, no new regression.**
+
+This does not claim universal correctness, production safety, or that
+adjudication is authoritative beyond its documented scope. Full detail, including
+every intermediate run between the v4 configuration and this one, is in
+`docs/benchmark/BASELINE.md`.
 
 ---
 
@@ -117,16 +150,21 @@ No LLM decides pass/fail anywhere in this system.
 - The benchmark is **project-specific**, not an industry-standard external suite.
   It makes changes to this engine falsifiable; it does not rank this engine
   against others.
-- Ceiling of 36/40 at this configuration, for the four cases in §3.
-- Judge lens calls are capped at `max_tokens=800`. The largest fixture occasionally
-  truncates, which fails closed to `UNVERIFIED`. **Not changed in this phase** —
-  raising it trades cost and cross-run comparability for an unmeasured gain.
+- **36/40 was the ceiling at the historical v4/Haiku configuration in §2-3, and
+  does not describe the current configuration.** The four v4-era cases in §3 are
+  a different, dataset-version-specific case set from the four cases closed in
+  §3a; `security-04-clean` remains a genuine current limitation (closed by
+  adjudication, not fixed — see §3a and `docs/benchmark/BASELINE.md`).
+- Judge lens calls are capped at `max_tokens=1600` (current). The largest fixture
+  can still occasionally truncate, which fails closed to `UNVERIFIED`. Raising it
+  further trades cost and cross-run comparability for an unmeasured gain.
 - Single provider (Anthropic), sequential sub-agent execution.
 - The n8n `/review` webhook runs `pytest` on submitted files inside the container
   with no sandboxing beyond the container boundary. Do not expose it publicly.
-- Five stability runs is a small sample; SD 0.447 is likely an underestimate of
-  long-run dispersion, since four of five scores were identical. The stronger
-  finding is the per-case matrix: 39 of 40 cases deterministic.
+- The five-run stability sample in §2 was small (SD 0.447 at the v4/Haiku
+  configuration); the current dataset v6 configuration cluster has since
+  accumulated many more runs — see `docs/benchmark/BASELINE.md` for the full
+  run-by-run and per-case stability record.
 
 ---
 
@@ -162,6 +200,8 @@ code. It returned **`NO_SAFE_TARGET`**, on measurement rather than opinion:
   **Any filter strong enough to clear the clean case clears its broken twin.**
 
 Five interventions, five reversions, and a measured impossibility argument for the
-remainder. Stopping is the finding, not a failure to try: the engine ships at
-88.0% with zero false passes rather than at a higher number bought with silent
-acceptance of broken code.
+remainder. Stopping is the finding, not a failure to try: at the v4/Haiku
+configuration this section describes, the engine shipped at 88.0% with zero false
+passes rather than at a higher number bought with silent acceptance of broken
+code. The current dataset v6 / `claude-sonnet-5` configuration (§3a) holds to the
+same zero-false-pass discipline — Run 68 measured `false_pass = 0` at 95.0%.
