@@ -1,6 +1,6 @@
 [project]
 name = "engine"
-version = "0.1.0"
+version = "1.0.0"
 description = "AI agent orchestration engine: orchestrator -> sub-agents -> multi-layer verification"
 readme = "README.md"
 license = { file = "LICENSE" }
