@@ -245,11 +245,15 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "run":
-        config = load_config()
-        gateway = LLMGateway.from_config(args.provider, config)
         workspace = Path(args.workspace) if args.workspace else Path(".engine/workspace")
 
-        result = run_task(args.task, workspace, gateway, config, provider_name=args.provider)
+        try:
+            config = load_config()
+            gateway = LLMGateway.from_config(args.provider, config)
+            result = run_task(args.task, workspace, gateway, config, provider_name=args.provider)
+        except Exception as exc:  # noqa: BLE001 - a CLI reports failures, it does not traceback
+            print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+            sys.exit(1)
 
         # Persist before displaying: the report is the durable artifact, so a
         # terminal that cannot render it must not cost us the file.
