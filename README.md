@@ -1,4 +1,4 @@
-<img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/2a0ebb51-9018-4186-a65c-1813ea00c6a8" />
+<img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/fd079104-aea4-4866-bb76-93fcad8dbdad" />
 
 
 # AgentGate
