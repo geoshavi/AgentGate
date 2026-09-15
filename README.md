@@ -1,7 +1,16 @@
+# AgentGate
+
+AI agent orchestration engine with a multi-layer verification pipeline that
+gates every output before it's accepted.
+
 <img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/fd079104-aea4-4866-bb76-93fcad8dbdad" />
 
-
-# AgentGate
+[![CI](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml/badge.svg)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-1%2C872%20passed-brightgreen)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
+[![engine-review-benchmark](https://img.shields.io/badge/engine--review--benchmark-38%2F40-blue)](#benchmark)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/geoshavi/AgentGate/blob/main/LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://github.com/geoshavi/AgentGate/blob/main/pyproject.toml)
+[![Release](https://img.shields.io/badge/release-v1.0.0--pending-lightgrey)](https://github.com/geoshavi/AgentGate/releases)
 
 AgentGate is an AI agent orchestration engine: an orchestrator analyzes a
 task, builds a validated execution plan, dispatches specialized sub-agents
@@ -12,6 +21,28 @@ review) before accepting it.
 AgentGate is the project name only. The Python package, the `engine` CLI
 command, runtime paths (`.engine/`) and the `engine-review-benchmark` suite
 keep their existing names.
+
+## Quick Start
+
+```
+python -m venv .venv
+.venv/Scripts/activate     # Windows
+pip install -e ".[dev]"
+cp .env.example .env       # fill in ANTHROPIC_API_KEY
+engine run "write a function that checks if a string is a palindrome, with a unit test"
+```
+
+Generated code lands in `.engine/workspace/`, a run report in
+`.engine/report.md`, and full run/verification history in `.engine/state.db`.
+
+## CLI overview
+
+| Command | Purpose |
+| --- | --- |
+| `engine run "<task>"` | Generate code for a task; verified before being accepted |
+| `engine code "<task>" --workspace <dir>` | Bounded coding task against an existing workspace — [docs](docs/coding-agent.md) |
+| `engine debug "<bug>" --workspace <dir> --repro=<token>` | Reproduce, fix, and prove a bug fix — [docs](docs/debug-agent.md) |
+| `engine bench [--dry-run]` | Run, or validate without calling any API, the `engine-review-benchmark` suite |
 
 ## Status
 
@@ -246,24 +277,6 @@ Open `graphify-out/graph.html` in a browser to explore module relationships.
 It is a **developer aid only** — it is gitignored, plays no part in the
 verification pipeline, and has no influence on any verdict or benchmark score.
 
-## Setup
-
-```
-python -m venv .venv
-.venv/Scripts/activate     # Windows
-pip install -e ".[dev]"
-cp .env.example .env       # fill in ANTHROPIC_API_KEY
-```
-
-## Usage
-
-```
-engine run "write a function that checks if a string is a palindrome, with a unit test"
-```
-
-Generated code lands in `.engine/workspace/`, a run report in `.engine/report.md`,
-and full run/verification history in `.engine/state.db`.
-
 ## Tests
 
 ```
@@ -317,3 +330,7 @@ curl -X POST http://localhost:5678/webhook/review \
 in the `engine-api` container — there is no sandboxing beyond the container
 boundary itself. Don't expose this webhook to the public internet without adding
 auth and/or real sandboxing in front of it.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
