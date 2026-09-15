@@ -4,11 +4,6 @@ AI agent orchestration engine with a multi-layer verification pipeline that
 gates every output before it's accepted.
 
 <img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/fd079104-aea4-4866-bb76-93fcad8dbdad" />
-## Demo
-
-Watch AgentGate reproduce, diagnose, repair, and verify an empty-cart bug end to end.
-
-[Watch the AgentGate v1.0.0 demo](https://www.loom.com/share/ae056d69401c418dac1f7ac81e79da79)
 
 [![CI](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml/badge.svg)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-1%2C872%20passed-brightgreen)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
@@ -16,6 +11,11 @@ Watch AgentGate reproduce, diagnose, repair, and verify an empty-cart bug end to
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/geoshavi/AgentGate/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://github.com/geoshavi/AgentGate/blob/main/pyproject.toml)
 [![Release](https://img.shields.io/badge/release-v1.0.0-brightgreen)](https://github.com/geoshavi/AgentGate/releases/tag/v1.0.0)
+## Demo
+
+AgentGate reproduce, diagnose, repair, and verify an empty-cart bug end to end.
+
+[Watch the AgentGate v1.0.0 demo] https://www.loom.com/share/ae056d69401c418dac1f7ac81e79da79
 
 AgentGate is an AI agent orchestration engine: an orchestrator analyzes a
 task, builds a validated execution plan, dispatches specialized sub-agents
