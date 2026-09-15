@@ -120,6 +120,17 @@ Neither agent is a sandbox — see the linked docs for the exact safety
 boundary (argv allowlists, path guards, scrubbed environment) before
 pointing either at anything you're not willing to see changed.
 
+### Additional agent modules (not CLI-exposed)
+
+`src/engine` also contains five further agent compositions built on the same
+AgentGate-verified pipeline as `engine code` — `architectureagent`,
+`docsagent`, `refactoragent`, `securityagent`, `testqaagent` — each with its
+own system prompt, tool set and dedicated test suite. **None of them has a
+`cli.py` entry point or documented usage today.** Their presence in the
+source tree is not a claim of supported public CLI functionality —
+`engine code` and `engine debug` remain the only currently documented public
+agent workflows.
+
 ## Benchmark
 
 The verification pipeline is measured against a project-specific suite,
