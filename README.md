@@ -4,7 +4,7 @@ AI agent orchestration engine with a multi-layer verification pipeline that
 gates every output before it's accepted.
 
 <img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/fd079104-aea4-4866-bb76-93fcad8dbdad" />
-
+                                           ----------------------------
 [![CI](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml/badge.svg)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-1%2C872%20passed-brightgreen)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
 [![engine-review-benchmark](https://img.shields.io/badge/engine--review--benchmark-38%2F40-blue)](#benchmark)
