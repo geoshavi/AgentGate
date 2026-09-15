@@ -4,6 +4,11 @@ AI agent orchestration engine with a multi-layer verification pipeline that
 gates every output before it's accepted.
 
 <img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/fd079104-aea4-4866-bb76-93fcad8dbdad" />
+## Demo
+
+Watch AgentGate reproduce, diagnose, repair, and verify an empty-cart bug end to end.
+
+[Watch the AgentGate v1.0.0 demo](https://www.loom.com/share/ae056d69401c418dac1f7ac81e79da79)
 
 [![CI](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml/badge.svg)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-1%2C872%20passed-brightgreen)](https://github.com/geoshavi/AgentGate/actions/workflows/ci.yml)
