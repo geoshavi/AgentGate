@@ -22,41 +22,29 @@ v6/`claude-sonnet-5` runs in §3a and `docs/benchmark/BASELINE.md`.
 
 ---
 
-## 2. Historical validated benchmark result (v2 / v4, superseded)
+## 2. Historical benchmark configuration (v2 / v4, superseded)
 
-Five runs at one commit, dataset frozen, no configuration change between runs:
-
-| | |
-| --- | --- |
-| Scores | **36, 35, 35, 35, 35** |
-| Mean | **35.2 / 40 = 88.0%** |
-| Sample SD | **0.447** |
-| False passes | **0 / 100** broken-case observations |
-| Deterministic cases | 39 of 40 |
-| Cost | $0.643 for the five runs |
-
-Recorded in `.engine/experiments/phase8d0-stability/`. **This result is
-historical, at the v4/Haiku configuration, and is not the current benchmark
-state** — see §3a for the current (dataset v6, `claude-sonnet-5`) result.
+An earlier five-run stability sample was measured at a prior v4-dataset /
+Haiku-judge configuration, before the v5/v6 dataset amendments and the
+Sonnet judge switch. **That configuration is not the current benchmark state**
+— see §3a for the current (dataset v6, `claude-sonnet-5`) result. The full
+scores, mean, sample SD and per-run cost are preserved as immutable evidence
+in `docs/experiments/PHASE8D1_FACTUAL_GROUNDING.md`,
+`docs/experiments/PHASE8D2A_VERIFIED_EVIDENCE_ARCHITECTURE.md`, and
+`docs/benchmark/BASELINE.md`; they are intentionally not reproduced here so
+this status file cannot circulate a superseded figure as current.
 
 ---
 
 ## 3. Historical remaining known failures (v2 / v4, superseded)
 
-At the v4/Haiku configuration above, four clean cases failed in every stored
-observation, capping that configuration at 36/40:
-
-| Case | Rate | Why the judge blocked it |
-| --- | --- | --- |
-| `correctness-02-clean` | 0/5 | Rated `abs(a - b) < 0.01` HIGH and asked for `decimal`, though the code *is* the stated predicate — an implementation preference |
-| `edge_case-03-clean` | 0/5 | Two lenses claimed `str` slicing splits multi-byte UTF-8. It cannot: `str` slices code points. The fix it prescribed was that task's own broken fixture |
-| `security-02-clean` | 0/5 | Two blockers alleged shell injection against `subprocess.run([...])` with no shell, each conceding non-exploitability in its own text; a third (uncaught `FileNotFoundError`) was factually true but not required by the task |
-| `security-04-clean` | 0/5 | Claims contradicted by the supplied code (an `all()` check) or excluded by the task's own wording; claim content varied run to run |
-
-`edge_case-04-clean` was variable (1/5) at that configuration and was the sole
-source of score variance there. **These are the v4/Haiku-configuration
-observations; they do not describe the current dataset v6 configuration** — see
-§3a.
+At that prior v4/Haiku configuration, four clean cases failed in every stored
+observation there, capping that configuration below the current result. Their
+per-case failure rates and the judge's stated reasoning are preserved as
+immutable evidence in `docs/experiments/PHASE8E0_SAFE_IMPROVEMENT_SELECTION.md`
+and are not reproduced here. **These were v4/Haiku-configuration observations;
+they do not describe the current dataset v6 configuration** — see §3a for the
+current closure state of the case identities that succeeded them.
 
 ## 3a. Current closure record (dataset v6, `claude-sonnet-5`)
 
@@ -150,10 +138,10 @@ No LLM decides pass/fail anywhere in this system.
 - The benchmark is **project-specific**, not an industry-standard external suite.
   It makes changes to this engine falsifiable; it does not rank this engine
   against others.
-- **36/40 was the ceiling at the historical v4/Haiku configuration in §2-3, and
-  does not describe the current configuration.** The four v4-era cases in §3 are
-  a different, dataset-version-specific case set from the four cases closed in
-  §3a; `security-04-clean` remains a genuine current limitation (closed by
+- **The historical v4/Haiku configuration in §2-3 had a lower ceiling than the
+  current configuration and does not describe it.** The four v4-era cases in §3
+  are a different, dataset-version-specific case set from the four cases closed
+  in §3a; `security-04-clean` remains a genuine current limitation (closed by
   adjudication, not fixed — see §3a and `docs/benchmark/BASELINE.md`).
 - Judge lens calls are capped at `max_tokens=1600` (current). The largest fixture
   can still occasionally truncate, which fails closed to `UNVERIFIED`. Raising it
@@ -161,10 +149,11 @@ No LLM decides pass/fail anywhere in this system.
 - Single provider (Anthropic), sequential sub-agent execution.
 - The n8n `/review` webhook runs `pytest` on submitted files inside the container
   with no sandboxing beyond the container boundary. Do not expose it publicly.
-- The five-run stability sample in §2 was small (SD 0.447 at the v4/Haiku
-  configuration); the current dataset v6 configuration cluster has since
-  accumulated many more runs — see `docs/benchmark/BASELINE.md` for the full
-  run-by-run and per-case stability record.
+- The five-run stability sample in §2 was small (at the historical v4/Haiku
+  configuration; see `docs/experiments/PHASE8D1_FACTUAL_GROUNDING.md` for the
+  figures); the current dataset v6 configuration cluster has since accumulated
+  many more runs — see `docs/benchmark/BASELINE.md` for the full run-by-run and
+  per-case stability record.
 
 ---
 
@@ -200,8 +189,10 @@ code. It returned **`NO_SAFE_TARGET`**, on measurement rather than opinion:
   **Any filter strong enough to clear the clean case clears its broken twin.**
 
 Five interventions, five reversions, and a measured impossibility argument for the
-remainder. Stopping is the finding, not a failure to try: at the v4/Haiku
-configuration this section describes, the engine shipped at 88.0% with zero false
-passes rather than at a higher number bought with silent acceptance of broken
-code. The current dataset v6 / `claude-sonnet-5` configuration (§3a) holds to the
-same zero-false-pass discipline — Run 68 measured `false_pass = 0` at 95.0%.
+remainder. Stopping is the finding, not a failure to try: at the historical
+v4/Haiku configuration this section describes, the engine shipped with zero false
+passes (figures preserved in
+`docs/experiments/PHASE8E0_SAFE_IMPROVEMENT_SELECTION.md`) rather than at a
+higher score bought with silent acceptance of broken code. The current dataset
+v6 / `claude-sonnet-5` configuration (§3a) holds to the same zero-false-pass
+discipline — Run 68 measured `false_pass = 0` at 95.0%.
