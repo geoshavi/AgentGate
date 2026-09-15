@@ -1,4 +1,4 @@
-<img width="1536" height="1024" alt="Codex Image 18 Aug 2026, 02_02_06" src="https://github.com/user-attachments/assets/2a0ebb51-9018-4186-a65c-1813ea00c6a8" />
+<img width="1536" height="1024" alt="AgentGate architecture overview" src="https://github.com/user-attachments/assets/2a0ebb51-9018-4186-a65c-1813ea00c6a8" />
 
 
 # AgentGate
@@ -224,7 +224,9 @@ observed case-specific defect — not a re-read of the runs already recorded.
   response can still truncate, which fails closed to `UNVERIFIED`. Raising it
   further is a cost and comparability trade-off, not a free fix, so it is left as
   a known operational limit.
-- **Single provider** (Anthropic) and sequential execution.
+- **Single provider** (Anthropic) and sequential execution. Pinned to
+  `anthropic>=0.40.0,<1.0.0` for SDK compatibility; nothing in the repository
+  currently wires up runtime routing to another provider.
 
 ## Project documentation
 
