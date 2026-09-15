@@ -18,7 +18,7 @@ keep their existing names.
 Working runtime: single provider (Anthropic), sequential multi-agent execution
 (coding / research / testing / refactoring), bounded retry loop, automated gates
 (ruff/mypy/pytest) + 3-lens LLM-judge review, deterministic verdict, SQLite run
-history and per-call metrics. 1,873 tests.
+history and per-call metrics. 1,875 tests (1,872 passing, 3 skipped).
 
 Every LLM call in the codebase — agents and judge lenses alike — routes through
 a single gateway (`runtime/gateway.py`) that enforces a token/spend budget
